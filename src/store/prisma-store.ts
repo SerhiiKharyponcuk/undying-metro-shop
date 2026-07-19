@@ -1,10 +1,14 @@
 import type { PrismaClient } from "@prisma/client";
 import type {
   AdminRecord,
+  AdminRole,
   AdminSessionRecord,
+  AuditLogRecord,
   DashboardCounts,
   EscortOrderRecord,
   EscortOrderStatus,
+  EscortPlayerProfileRecord,
+  FinancialSummary,
   ManagerAvailabilityRecord,
   ManagerClaimResult,
   Page,
@@ -19,7 +23,10 @@ import { calculatePenaltyAmount } from "../lib/escort-calculation.js";
 
 const escortOrderInclude = {
   participants: {
-    include: { penalties: { orderBy: { sequence: "asc" as const } } },
+    include: {
+      penalties: { orderBy: [{ violationDate: "asc" as const }, { sequence: "asc" as const }] },
+      playerProfile: { include: { penalties: { select: { violationDate: true } } } },
+    },
     orderBy: { createdAt: "asc" as const },
   },
 };
@@ -55,7 +62,7 @@ async function reconcileAdminAccess(database: any, presence: AdminSessionPresenc
       OR: [
         { expiresAt: { lte: now } },
         { lastSeenAt: { lt: activeSince } },
-        { admin: { is: { active: false } } },
+        { admin: { is: { OR: [{ active: false }, { role: "observer" }] } } },
       ],
     },
     data: { accessMode: "observer" },
@@ -66,7 +73,7 @@ async function reconcileAdminAccess(database: any, presence: AdminSessionPresenc
       accessMode: "operator",
       expiresAt: { gt: now },
       lastSeenAt: { gte: activeSince },
-      admin: { is: { active: true } },
+      admin: { is: { active: true, role: { not: "observer" } } },
     },
     select: { id: true },
   });
@@ -77,7 +84,7 @@ async function reconcileAdminAccess(database: any, presence: AdminSessionPresenc
       accessMode: "observer",
       expiresAt: { gt: now },
       lastSeenAt: { gte: activeSince },
-      admin: { is: { active: true } },
+      admin: { is: { active: true, role: { not: "observer" } } },
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: { id: true },
@@ -92,9 +99,35 @@ function mapAdmin(value: any): AdminRecord {
     id: value.id,
     username: value.username,
     passwordHash: value.passwordHash,
+    role: value.role,
     active: value.active,
     createdAt: value.createdAt,
   };
+}
+
+function mapPlayerProfile(value: any): EscortPlayerProfileRecord {
+  return {
+    id: value.id,
+    gameId: value.gameId,
+    displayName: value.displayName,
+    contact: value.contact,
+    suspendedUntil: value.suspendedUntil,
+    permanentlyBanned: value.permanentlyBanned,
+    bannedAt: value.bannedAt,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    orderCount: value._count?.participants,
+    penaltyCount: value._count?.penalties,
+    earnedUahMinor: value.earnedUahMinor,
+    withheldUahMinor: value.withheldUahMinor,
+  };
+}
+
+function isSameUtcDay(value: Date | null | undefined, now = new Date()): boolean {
+  return Boolean(value)
+    && value!.getUTCFullYear() === now.getUTCFullYear()
+    && value!.getUTCMonth() === now.getUTCMonth()
+    && value!.getUTCDate() === now.getUTCDate();
 }
 
 function mapSession(value: any): AdminSessionRecord {
@@ -167,6 +200,9 @@ function mapEscortOrder(value: any): EscortOrderRecord {
     buyerName: value.buyerName,
     buyerContact: value.buyerContact,
     buyerGameId: value.buyerGameId,
+    reviewCodeHash: value.reviewCodeHash,
+    reviewCodeIssuedAt: value.reviewCodeIssuedAt,
+    reviewCodeConsumedAt: value.reviewCodeConsumedAt,
     originalAmountMinor: value.originalAmountMinor,
     currency: value.currency,
     exchangeRateMicros: value.exchangeRateMicros,
@@ -186,6 +222,11 @@ function mapEscortOrder(value: any): EscortOrderRecord {
       orderId: participant.orderId,
       name: participant.name,
       contact: participant.contact,
+      playerProfileId: participant.playerProfileId,
+      playerProfile: participant.playerProfile ? mapPlayerProfile(participant.playerProfile) : null,
+      dailyViolationCount: participant.playerProfile
+        ? (participant.playerProfile.penalties ?? []).filter((penalty: any) => isSameUtcDay(penalty.violationDate)).length
+        : (participant.penalties ?? []).filter((penalty: any) => isSameUtcDay(penalty.violationDate ?? penalty.createdAt)).length,
       shareUahMinor: participant.shareUahMinor,
       active: participant.active,
       paid: participant.paid,
@@ -196,7 +237,9 @@ function mapEscortOrder(value: any): EscortOrderRecord {
       penalties: (participant.penalties ?? []).map((penalty: any) => ({
         id: penalty.id,
         participantId: penalty.participantId,
+        playerProfileId: penalty.playerProfileId,
         sequence: penalty.sequence,
+        violationDate: penalty.violationDate,
         percentage: penalty.percentage,
         amountUahMinor: penalty.amountUahMinor,
         reason: penalty.reason,
@@ -235,8 +278,10 @@ export class PrismaStore implements AppStore {
   async createVerifiedReview(input: NewReview): Promise<VerifiedReviewResult> {
     try {
       return await this.prisma.$transaction(async (database) => {
+        const { reviewCodeHash, ...reviewInput } = input;
         const eligibleWhere = {
           buyerGameId: input.buyerGameId,
+          reviewCodeHash,
           status: { in: ["completed", "paid"] as EscortOrderStatus[] },
         };
         const eligible = await database.escortOrder.findFirst({ where: eligibleWhere, select: { id: true } });
@@ -250,7 +295,11 @@ export class PrismaStore implements AppStore {
         if (!available) return { status: "already_reviewed" as const };
 
         const review = await database.review.create({
-          data: { ...input, escortOrderId: available.id },
+          data: { ...reviewInput, escortOrderId: available.id },
+        });
+        await database.escortOrder.update({
+          where: { id: available.id },
+          data: { reviewCodeConsumedAt: new Date() },
         });
         return { status: "created" as const, review: mapReview(review) };
       });
@@ -382,13 +431,33 @@ export class PrismaStore implements AppStore {
 
   async createEscortOrder(input: NewEscortOrder): Promise<EscortOrderRecord> {
     const { participants, ...order } = input;
-    return mapEscortOrder(await this.prisma.escortOrder.create({
-      data: {
-        ...(order as any),
-        participants: { create: participants as any },
-      },
-      include: escortOrderInclude,
-    }));
+    const created = await this.prisma.$transaction(async (database) => {
+      const now = new Date();
+      const prepared = [];
+      for (const participant of participants) {
+        const existing = await database.escortPlayerProfile.findUnique({ where: { gameId: participant.gameId } });
+        if (existing?.permanentlyBanned) throw new Error(`Игрок ${participant.name} заблокирован навсегда`);
+        if (existing?.suspendedUntil && existing.suspendedUntil > now) {
+          throw new Error(`Игрок ${participant.name} отстранён до ${existing.suspendedUntil.toISOString()}`);
+        }
+        const profile = await database.escortPlayerProfile.upsert({
+          where: { gameId: participant.gameId },
+          create: { gameId: participant.gameId, displayName: participant.name, contact: participant.contact },
+          update: { displayName: participant.name, contact: participant.contact },
+        });
+        prepared.push({
+          name: participant.name,
+          contact: participant.contact,
+          shareUahMinor: participant.shareUahMinor,
+          playerProfileId: profile.id,
+        });
+      }
+      return database.escortOrder.create({
+        data: { ...(order as any), participants: { create: prepared } },
+        include: escortOrderInclude,
+      });
+    }, { isolationLevel: "Serializable" });
+    return mapEscortOrder(created);
   }
 
   async listEscortOrders(status: EscortOrderStatus | undefined, page: number, pageSize: number): Promise<Page<EscortOrderRecord>> {
@@ -433,25 +502,67 @@ export class PrismaStore implements AppStore {
 
   async penalizeEscortParticipant(orderId: string, participantId: string, reason: string, adminId: string): Promise<EscortOrderRecord | null> {
     const order = await this.prisma.$transaction(async (database) => {
+      const now = new Date();
+      const violationDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const nextDate = new Date(violationDate.getTime() + 24 * 60 * 60 * 1000);
       const participant = await database.escortParticipant.findFirst({
         where: { id: participantId, orderId },
-        include: { penalties: { orderBy: { sequence: "asc" } } },
+        include: { penalties: { orderBy: { createdAt: "asc" } }, playerProfile: true },
       });
       if (!participant) return null;
-      if (!participant.active) throw new Error(participant.excludedAt ? "Игрок уже исключён после четвёртого нарушения" : "Нельзя штрафовать заменённого игрока");
+      if (participant.replacedAt) throw new Error("Нельзя штрафовать заменённого игрока");
       if (participant.paid) throw new Error("Нельзя изменить уже выплаченную долю");
-      const sequence = participant.penalties.length + 1;
-      const penalty = calculatePenaltyAmount(participant.shareUahMinor, sequence);
+      if (participant.playerProfile?.permanentlyBanned) throw new Error("Игрок уже заблокирован навсегда");
+      const dailyCount = participant.playerProfileId
+        ? await database.escortPenalty.count({
+            where: { playerProfileId: participant.playerProfileId, violationDate: { gte: violationDate, lt: nextDate } },
+          })
+        : participant.penalties.filter((item: any) => {
+            const value = item.violationDate ?? item.createdAt;
+            return value >= violationDate && value < nextDate;
+          }).length;
+      const sequence = dailyCount + 1;
+      if (sequence > 5) throw new Error("Все нарушения за сегодня уже зафиксированы");
+      if (!participant.active && sequence !== 5) throw new Error("Игрок уже отстранён");
+      const penalty = sequence <= 4
+        ? calculatePenaltyAmount(participant.shareUahMinor, sequence)
+        : { percentage: 0, amountUahMinor: 0n };
       const alreadyWithheld = participant.penalties.reduce((sum, item) => sum + item.amountUahMinor, 0n);
       const remaining = participant.shareUahMinor - alreadyWithheld;
       const amountUahMinor = penalty.amountUahMinor > remaining ? remaining : penalty.amountUahMinor;
       await database.escortPenalty.create({
-        data: { participantId, sequence, percentage: penalty.percentage, amountUahMinor, reason, createdById: adminId },
+        data: {
+          participantId,
+          playerProfileId: participant.playerProfileId,
+          violationDate,
+          sequence,
+          percentage: penalty.percentage,
+          amountUahMinor,
+          reason,
+          createdById: adminId,
+        },
       });
       if (sequence === 4) {
+        const suspendedUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         await database.escortParticipant.update({
           where: { id: participantId },
-          data: { active: false, excludedAt: new Date() },
+          data: { active: false, excludedAt: now },
+        });
+        if (participant.playerProfileId) {
+          await database.escortPlayerProfile.update({
+            where: { id: participant.playerProfileId },
+            data: { suspendedUntil },
+          });
+        }
+      }
+      if (sequence === 5 && participant.playerProfileId) {
+        await database.escortPlayerProfile.update({
+          where: { id: participant.playerProfileId },
+          data: { permanentlyBanned: true, bannedAt: now, suspendedUntil: null },
+        });
+        await database.escortParticipant.update({
+          where: { id: participantId },
+          data: { active: false, excludedAt: participant.excludedAt ?? now },
         });
       }
       return database.escortOrder.findUnique({ where: { id: orderId }, include: escortOrderInclude });
@@ -462,7 +573,7 @@ export class PrismaStore implements AppStore {
   async replaceEscortParticipant(
     orderId: string,
     participantId: string,
-    input: { name: string; contact: string | null },
+    input: { name: string; gameId: string; contact: string | null },
   ): Promise<EscortOrderRecord | null> {
     const order = await this.prisma.$transaction(async (database) => {
       const participant = await database.escortParticipant.findFirst({
@@ -476,6 +587,17 @@ export class PrismaStore implements AppStore {
       const withheld = participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
       const transferredShare = participant.shareUahMinor - withheld;
       if (transferredShare <= 0n) throw new Error("У игрока не осталось доли для передачи");
+      const now = new Date();
+      const existingProfile = await database.escortPlayerProfile.findUnique({ where: { gameId: input.gameId } });
+      if (existingProfile?.permanentlyBanned) throw new Error("Новый игрок заблокирован навсегда");
+      if (existingProfile?.suspendedUntil && existingProfile.suspendedUntil > now) {
+        throw new Error(`Новый игрок отстранён до ${existingProfile.suspendedUntil.toISOString()}`);
+      }
+      const profile = await database.escortPlayerProfile.upsert({
+        where: { gameId: input.gameId },
+        create: { gameId: input.gameId, displayName: input.name, contact: input.contact },
+        update: { displayName: input.name, contact: input.contact },
+      });
       await database.escortParticipant.update({
         where: { id: participantId },
         data: { active: false, replacedAt: new Date() },
@@ -485,6 +607,7 @@ export class PrismaStore implements AppStore {
           orderId,
           name: input.name,
           contact: input.contact,
+          playerProfileId: profile.id,
           shareUahMinor: transferredShare,
           replacementForId: participantId,
         },
@@ -492,6 +615,55 @@ export class PrismaStore implements AppStore {
       return database.escortOrder.findUnique({ where: { id: orderId }, include: escortOrderInclude });
     }, { isolationLevel: "Serializable" });
     return order ? mapEscortOrder(order) : null;
+  }
+
+  async listEscortPlayerProfiles(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPlayerProfileRecord>> {
+    const where = query ? {
+      OR: [
+        { gameId: { contains: query, mode: "insensitive" as const } },
+        { displayName: { contains: query, mode: "insensitive" as const } },
+        { contact: { contains: query, mode: "insensitive" as const } },
+      ],
+    } : {};
+    const [profiles, total] = await this.prisma.$transaction([
+      this.prisma.escortPlayerProfile.findMany({
+        where,
+        include: { _count: { select: { participants: true, penalties: true } } },
+        orderBy: [{ permanentlyBanned: "desc" }, { updatedAt: "desc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.escortPlayerProfile.count({ where }),
+    ]);
+    const items = await Promise.all(profiles.map(async (profile) => {
+      const [earned, withheld] = await Promise.all([
+        this.prisma.escortParticipant.aggregate({ where: { playerProfileId: profile.id }, _sum: { shareUahMinor: true } }),
+        this.prisma.escortPenalty.aggregate({ where: { playerProfileId: profile.id }, _sum: { amountUahMinor: true } }),
+      ]);
+      return mapPlayerProfile({
+        ...profile,
+        earnedUahMinor: earned._sum.shareUahMinor ?? 0n,
+        withheldUahMinor: withheld._sum.amountUahMinor ?? 0n,
+      });
+    }));
+    return { items, total, page, pageSize };
+  }
+
+  async getEscortPlayerProfile(id: string): Promise<EscortPlayerProfileRecord | null> {
+    const profile = await this.prisma.escortPlayerProfile.findUnique({
+      where: { id },
+      include: { _count: { select: { participants: true, penalties: true } } },
+    });
+    if (!profile) return null;
+    const [earned, withheld] = await Promise.all([
+      this.prisma.escortParticipant.aggregate({ where: { playerProfileId: id }, _sum: { shareUahMinor: true } }),
+      this.prisma.escortPenalty.aggregate({ where: { playerProfileId: id }, _sum: { amountUahMinor: true } }),
+    ]);
+    return mapPlayerProfile({
+      ...profile,
+      earnedUahMinor: earned._sum.shareUahMinor ?? 0n,
+      withheldUahMinor: withheld._sum.amountUahMinor ?? 0n,
+    });
   }
 
   async getShopBankBalance(): Promise<bigint> {
@@ -507,6 +679,17 @@ export class PrismaStore implements AppStore {
     return result._sum.creatorAmountMinor ?? 0n;
   }
 
+  async rotateEscortReviewCode(id: string, reviewCodeHash: string, issuedAt: Date): Promise<EscortOrderRecord | null> {
+    const existing = await this.prisma.escortOrder.findUnique({ where: { id } });
+    if (!existing) return null;
+    if (existing.reviewCodeConsumedAt) throw new Error("Отзыв для этого заказа уже оставлен");
+    return mapEscortOrder(await this.prisma.escortOrder.update({
+      where: { id },
+      data: { reviewCodeHash, reviewCodeIssuedAt: issuedAt },
+      include: escortOrderInclude,
+    }));
+  }
+
   async getDirectorBankBalance(): Promise<bigint> {
     const result = await this.prisma.escortOrder.aggregate({
       where: { status: { not: "cancelled" } },
@@ -520,8 +703,19 @@ export class PrismaStore implements AppStore {
     return value ? mapAdmin(value) : null;
   }
 
-  async createAdmin(username: string, passwordHash: string): Promise<AdminRecord> {
-    return mapAdmin(await this.prisma.admin.create({ data: { username, passwordHash } }));
+  async listAdmins(): Promise<AdminRecord[]> {
+    const values = await this.prisma.admin.findMany({ orderBy: [{ createdAt: "asc" }, { username: "asc" }] });
+    return values.map(mapAdmin);
+  }
+
+  async createAdmin(username: string, passwordHash: string, role: AdminRole = "admin"): Promise<AdminRecord> {
+    return mapAdmin(await this.prisma.admin.create({ data: { username, passwordHash, role: role as any } }));
+  }
+
+  async updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string }): Promise<AdminRecord | null> {
+    const existing = await this.prisma.admin.findUnique({ where: { id } });
+    if (!existing) return null;
+    return mapAdmin(await this.prisma.admin.update({ where: { id }, data: input as any }));
   }
 
   async createAdminSession(
@@ -531,11 +725,12 @@ export class PrismaStore implements AppStore {
     const value = await withAccessTransaction(this.prisma, async (database) => {
       await database.adminSession.deleteMany({ where: { expiresAt: { lte: presence.now } } });
       await reconcileAdminAccess(database, presence);
+      const admin = await database.admin.findUnique({ where: { id: input.adminId }, select: { role: true } });
       const operator = await database.adminSession.findFirst({ where: { accessMode: "operator" }, select: { id: true } });
       return database.adminSession.create({
         data: {
           ...input,
-          accessMode: operator ? "observer" : "operator",
+          accessMode: admin?.role === "observer" || operator ? "observer" : "operator",
           lastSeenAt: presence.now,
         },
         include: { admin: true },
@@ -568,6 +763,83 @@ export class PrismaStore implements AppStore {
 
   async deleteExpiredAdminSessions(now: Date): Promise<void> {
     await this.prisma.adminSession.deleteMany({ where: { expiresAt: { lte: now } } });
+  }
+
+  async createAuditLog(input: {
+    adminId: string | null;
+    action: string;
+    entityType: string;
+    entityId?: string | null;
+    details?: Record<string, unknown>;
+  }): Promise<void> {
+    await this.prisma.auditLog.create({ data: input as any });
+  }
+
+  async listAuditLogs(page: number, pageSize: number): Promise<Page<AuditLogRecord>> {
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.auditLog.findMany({
+        include: { admin: { select: { username: true } } },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.auditLog.count(),
+    ]);
+    return {
+      items: items.map((item: any) => ({
+        id: item.id,
+        adminId: item.adminId,
+        adminUsername: item.admin?.username ?? null,
+        action: item.action,
+        entityType: item.entityType,
+        entityId: item.entityId,
+        details: item.details as Record<string, unknown> | null,
+        createdAt: item.createdAt,
+      })),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async financialSummary(from: Date, to: Date): Promise<FinancialSummary> {
+    const orders = await this.prisma.escortOrder.findMany({
+      where: { status: { not: "cancelled" }, orderDate: { gte: from, lte: to } },
+      include: { participants: { include: { penalties: true } } },
+    });
+    let grossUahMinor = 0n;
+    let directorUahMinor = 0n;
+    let creatorUahMinor = 0n;
+    let escortPoolUahMinor = 0n;
+    let penaltiesUahMinor = 0n;
+    let paidToEscortsUahMinor = 0n;
+    let unpaidToEscortsUahMinor = 0n;
+    for (const order of orders) {
+      grossUahMinor += order.amountUahMinor;
+      directorUahMinor += order.directorAmountMinor;
+      creatorUahMinor += order.creatorAmountMinor;
+      escortPoolUahMinor += order.escortPoolMinor;
+      for (const participant of order.participants) {
+        const withheld = participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
+        penaltiesUahMinor += withheld;
+        if (participant.replacedAt) continue;
+        const payout = participant.shareUahMinor - withheld;
+        if (participant.paid) paidToEscortsUahMinor += payout;
+        else unpaidToEscortsUahMinor += payout;
+      }
+    }
+    return {
+      from,
+      to,
+      orderCount: orders.length,
+      grossUahMinor,
+      directorUahMinor,
+      creatorUahMinor,
+      escortPoolUahMinor,
+      penaltiesUahMinor,
+      paidToEscortsUahMinor,
+      unpaidToEscortsUahMinor,
+    };
   }
 
   async dashboardCounts(): Promise<DashboardCounts> {

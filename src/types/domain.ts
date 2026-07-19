@@ -14,11 +14,13 @@ export type OrderCurrency = "UAH" | "EUR" | "USD";
 export type EscortOrderStatus = "planned" | "completed" | "paid" | "cancelled";
 export type ExchangeRateSource = "uah" | "nbu" | "manual";
 export type AdminAccessMode = "operator" | "observer";
+export type AdminRole = "owner" | "director" | "admin" | "observer";
 
 export interface AdminRecord {
   id: string;
   username: string;
   passwordHash: string;
+  role: AdminRole;
   active: boolean;
   createdAt: Date;
 }
@@ -108,6 +110,9 @@ export interface EscortParticipantRecord {
   orderId: string;
   name: string;
   contact: string | null;
+  playerProfileId: string | null;
+  playerProfile: EscortPlayerProfileRecord | null;
+  dailyViolationCount: number;
   shareUahMinor: bigint;
   active: boolean;
   paid: boolean;
@@ -121,7 +126,9 @@ export interface EscortParticipantRecord {
 export interface EscortPenaltyRecord {
   id: string;
   participantId: string;
+  playerProfileId: string | null;
   sequence: number;
+  violationDate: Date | null;
   percentage: number;
   amountUahMinor: bigint;
   reason: string;
@@ -135,6 +142,9 @@ export interface EscortOrderRecord {
   buyerName: string;
   buyerContact: string | null;
   buyerGameId: string | null;
+  reviewCodeHash: string | null;
+  reviewCodeIssuedAt: Date | null;
+  reviewCodeConsumedAt: Date | null;
   originalAmountMinor: bigint;
   currency: OrderCurrency;
   exchangeRateMicros: bigint;
@@ -150,4 +160,44 @@ export interface EscortOrderRecord {
   createdAt: Date;
   updatedAt: Date;
   participants: EscortParticipantRecord[];
+}
+
+export interface EscortPlayerProfileRecord {
+  id: string;
+  gameId: string;
+  displayName: string;
+  contact: string | null;
+  suspendedUntil: Date | null;
+  permanentlyBanned: boolean;
+  bannedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  orderCount?: number;
+  penaltyCount?: number;
+  earnedUahMinor?: bigint;
+  withheldUahMinor?: bigint;
+}
+
+export interface AuditLogRecord {
+  id: string;
+  adminId: string | null;
+  adminUsername: string | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  details: Record<string, unknown> | null;
+  createdAt: Date;
+}
+
+export interface FinancialSummary {
+  from: Date;
+  to: Date;
+  orderCount: number;
+  grossUahMinor: bigint;
+  directorUahMinor: bigint;
+  creatorUahMinor: bigint;
+  escortPoolUahMinor: bigint;
+  penaltiesUahMinor: bigint;
+  paidToEscortsUahMinor: bigint;
+  unpaidToEscortsUahMinor: bigint;
 }

@@ -1,13 +1,17 @@
 import type {
   AdminRecord,
+  AdminRole,
   AdminSessionRecord,
+  AuditLogRecord,
   ContactType,
   DashboardCounts,
   EscortOrderRecord,
   EscortOrderStatus,
+  EscortPlayerProfileRecord,
   ExchangeRateSource,
   ManagerAvailabilityRecord,
   ManagerClaimResult,
+  FinancialSummary,
   NotificationState,
   Page,
   ReviewRecord,
@@ -25,6 +29,7 @@ export interface NewReview {
   rating: number;
   text: string;
   buyerGameId: string;
+  reviewCodeHash: string;
   contentHash: string;
   ipHash: string;
 }
@@ -56,6 +61,8 @@ export interface NewEscortOrder {
   buyerName: string;
   buyerContact: string | null;
   buyerGameId: string;
+  reviewCodeHash: string;
+  reviewCodeIssuedAt: Date;
   originalAmountMinor: bigint;
   currency: OrderCurrency;
   exchangeRateMicros: bigint;
@@ -67,7 +74,7 @@ export interface NewEscortOrder {
   escortPoolMinor: bigint;
   orderDate: Date;
   createdById: string;
-  participants: Array<{ name: string; contact: string | null; shareUahMinor: bigint }>;
+  participants: Array<{ name: string; gameId: string; contact: string | null; shareUahMinor: bigint }>;
 }
 
 export interface AppStore {
@@ -93,19 +100,24 @@ export interface AppStore {
   createEscortOrder(input: NewEscortOrder): Promise<EscortOrderRecord>;
   listEscortOrders(status: EscortOrderStatus | undefined, page: number, pageSize: number): Promise<Page<EscortOrderRecord>>;
   updateEscortOrderStatus(id: string, status: EscortOrderStatus): Promise<EscortOrderRecord | null>;
+  rotateEscortReviewCode(id: string, reviewCodeHash: string, issuedAt: Date): Promise<EscortOrderRecord | null>;
   updateEscortParticipantPaid(orderId: string, participantId: string, paid: boolean): Promise<EscortOrderRecord | null>;
   penalizeEscortParticipant(orderId: string, participantId: string, reason: string, adminId: string): Promise<EscortOrderRecord | null>;
   replaceEscortParticipant(
     orderId: string,
     participantId: string,
-    input: { name: string; contact: string | null },
+    input: { name: string; gameId: string; contact: string | null },
   ): Promise<EscortOrderRecord | null>;
+  listEscortPlayerProfiles(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPlayerProfileRecord>>;
+  getEscortPlayerProfile(id: string): Promise<EscortPlayerProfileRecord | null>;
   getShopBankBalance(): Promise<bigint>;
   getDirectorBankBalance(): Promise<bigint>;
   getCreatorBankBalance(): Promise<bigint>;
 
   findAdminByUsername(username: string): Promise<AdminRecord | null>;
-  createAdmin(username: string, passwordHash: string): Promise<AdminRecord>;
+  listAdmins(): Promise<AdminRecord[]>;
+  createAdmin(username: string, passwordHash: string, role?: AdminRole): Promise<AdminRecord>;
+  updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string }): Promise<AdminRecord | null>;
   createAdminSession(input: {
     tokenHash: string;
     csrfToken: string;
@@ -115,6 +127,16 @@ export interface AppStore {
   refreshAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<AdminSessionRecord | null>;
   deleteAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<void>;
   deleteExpiredAdminSessions(now: Date): Promise<void>;
+
+  createAuditLog(input: {
+    adminId: string | null;
+    action: string;
+    entityType: string;
+    entityId?: string | null;
+    details?: Record<string, unknown>;
+  }): Promise<void>;
+  listAuditLogs(page: number, pageSize: number): Promise<Page<AuditLogRecord>>;
+  financialSummary(from: Date, to: Date): Promise<FinancialSummary>;
 
   dashboardCounts(): Promise<DashboardCounts>;
   createNotificationLog(input: {

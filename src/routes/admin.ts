@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import { calculateEscortSplit, formatMinor, formatRate, parseMoneyToMinor, parseRateToMicros, PENALTY_PERCENTAGES } from "../lib/escort-calculation.js";
 import { getOfficialNbuRate } from "../lib/nbu.js";
-import { cleanPlainText, constantTimeEqual, containsMarkup, hashSecret, randomToken, sha256, verifySecret } from "../lib/security.js";
+import { cleanPlainText, constantTimeEqual, containsMarkup, hashSecret, keyedHash, randomCode, randomToken, sha256, verifySecret } from "../lib/security.js";
 import type { AppStore } from "../store/store.js";
 
 const COOKIE_NAME = "undying_admin_session";
@@ -52,6 +52,7 @@ const escortOrderBody = z.object({
   orderDate: orderDateValue,
   escorts: z.array(z.object({
     name: plainText(2, 64),
+    gameId: z.string().trim().regex(/^\d{5,20}$/, "Укажите PUBG ID сопровождающего"),
     contact: z.union([plainText(3, 128), z.literal("")]).optional().default(""),
   })).min(1).max(3),
 });
@@ -67,8 +68,26 @@ const rateQuery = z.object({ currency: z.enum(["UAH", "EUR", "USD"]), date: orde
 const penaltyBody = z.object({ reason: plainText(3, 300) });
 const replacementBody = z.object({
   name: plainText(2, 64),
+  gameId: z.string().trim().regex(/^\d{5,20}$/, "Укажите PUBG ID нового игрока"),
   contact: z.union([plainText(3, 128), z.literal("")]).optional().default(""),
 });
+const adminRole = z.enum(["owner", "director", "admin", "observer"]);
+const adminCreateBody = z.object({
+  username: z.string().trim().toLowerCase().min(3).max(64).regex(/^[a-zA-Z0-9._-]+$/),
+  password: z.string().min(12).max(256),
+  role: adminRole,
+});
+const adminUpdateBody = z.object({
+  role: adminRole.optional(),
+  active: z.boolean().optional(),
+  password: z.string().min(12).max(256).optional(),
+}).refine((value) => Object.keys(value).length > 0, "Нет изменений");
+const pageQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(50),
+});
+const profileQuery = pageQuery.extend({ query: z.string().trim().max(80).optional() });
+const reportQuery = z.object({ from: orderDateValue, to: orderDateValue });
 
 function orderDate(value: string): Date | null {
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -89,6 +108,8 @@ function serializeEscortOrder(order: any) {
     buyerName: order.buyerName,
     buyerContact: order.buyerContact,
     buyerGameId: order.buyerGameId,
+    reviewCodeIssuedAt: order.reviewCodeIssuedAt,
+    reviewCodeConsumedAt: order.reviewCodeConsumedAt,
     originalAmount: formatMinor(order.originalAmountMinor),
     currency: order.currency,
     exchangeRate: formatRate(order.exchangeRateMicros),
@@ -108,16 +129,23 @@ function serializeEscortOrder(order: any) {
           (sum: bigint, penalty: any) => sum + penalty.amountUahMinor,
           0n,
         );
-        const nextPenalty = PENALTY_PERCENTAGES[(participant.penalties ?? []).length] ?? null;
+        const dailyCount = participant.dailyViolationCount ?? 0;
+        const nextPenalty = PENALTY_PERCENTAGES[dailyCount] ?? null;
         return {
           penaltyTotalUah: formatMinor(penaltyTotalMinor),
           payoutUah: formatMinor(participant.replacedAt ? 0n : BigInt(participant.shareUahMinor) - penaltyTotalMinor),
-          nextPenaltyPercent: participant.active ? nextPenalty : null,
+          dailyViolationCount: dailyCount,
+          nextPenaltyPercent: dailyCount < 4 ? nextPenalty : null,
+          nextViolationAction: dailyCount < 4 ? "penalty" : dailyCount === 4 ? "permanent_ban" : null,
         };
       })(),
       id: participant.id,
       name: participant.name,
       contact: participant.contact,
+      playerGameId: participant.playerProfile?.gameId ?? null,
+      playerProfileId: participant.playerProfileId,
+      suspendedUntil: participant.playerProfile?.suspendedUntil ?? null,
+      permanentlyBanned: participant.playerProfile?.permanentlyBanned ?? false,
       shareUah: formatMinor(participant.shareUahMinor),
       active: participant.active,
       paid: participant.paid,
@@ -128,6 +156,7 @@ function serializeEscortOrder(order: any) {
       penalties: (participant.penalties ?? []).map((penalty: any) => ({
         id: penalty.id,
         sequence: penalty.sequence,
+        violationDate: penalty.violationDate,
         percentage: penalty.percentage,
         amountUah: formatMinor(penalty.amountUahMinor),
         reason: penalty.reason,
@@ -135,6 +164,43 @@ function serializeEscortOrder(order: any) {
       })),
     })),
   };
+}
+
+function serializePlayerProfile(profile: any) {
+  return {
+    id: profile.id,
+    gameId: profile.gameId,
+    displayName: profile.displayName,
+    contact: profile.contact,
+    suspendedUntil: profile.suspendedUntil,
+    permanentlyBanned: profile.permanentlyBanned,
+    bannedAt: profile.bannedAt,
+    orderCount: profile.orderCount ?? 0,
+    penaltyCount: profile.penaltyCount ?? 0,
+    earnedUah: formatMinor(profile.earnedUahMinor ?? 0n),
+    withheldUah: formatMinor(profile.withheldUahMinor ?? 0n),
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt,
+  };
+}
+
+function serializeFinancial(summary: any) {
+  return {
+    from: summary.from,
+    to: summary.to,
+    orderCount: summary.orderCount,
+    grossUah: formatMinor(summary.grossUahMinor),
+    directorUah: formatMinor(summary.directorUahMinor),
+    creatorUah: formatMinor(summary.creatorUahMinor),
+    escortPoolUah: formatMinor(summary.escortPoolUahMinor),
+    penaltiesUah: formatMinor(summary.penaltiesUahMinor),
+    paidToEscortsUah: formatMinor(summary.paidToEscortsUahMinor),
+    unpaidToEscortsUah: formatMinor(summary.unpaidToEscortsUahMinor),
+  };
+}
+
+function csvCell(value: unknown): string {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
 
 function sessionCookie(request: FastifyRequest): string {
@@ -171,13 +237,23 @@ export async function registerAdminRoutes(
 
   const requireOperator = async (request: FastifyRequest, reply: FastifyReply) => {
     if (!request.adminAuth) return reply.code(401).send({ error: "Требуется вход администратора" });
-    if (request.adminAuth.accessMode !== "operator") {
+    if (request.adminAuth.accessMode !== "operator" || request.adminAuth.admin.role === "observer") {
       return reply.code(403).send({
         code: "ADMIN_READ_ONLY",
         error: "Панель открыта в режиме наблюдения. Изменения может вносить только первый активный администратор.",
       });
     }
   };
+
+  const requireOwner = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!request.adminAuth) return reply.code(401).send({ error: "Требуется вход администратора" });
+    if (request.adminAuth.admin.role !== "owner") {
+      return reply.code(403).send({ error: "Только владелец может управлять аккаунтами" });
+    }
+  };
+
+  const audit = (request: FastifyRequest, action: string, entityType: string, entityId?: string | null, details?: Record<string, unknown>) =>
+    store.createAuditLog({ adminId: request.adminAuth?.admin.id ?? null, action, entityType, entityId, details });
 
   app.post(
     "/api/admin/login",
@@ -198,11 +274,11 @@ export async function registerAdminRoutes(
         const existing = await store.refreshAdminSession(sha256(existingToken), presence);
         if (existing?.admin.id === admin.id) {
           return {
-            admin: { id: admin.id, username: admin.username },
+            admin: { id: admin.id, username: admin.username, role: admin.role },
             csrfToken: existing.csrfToken,
             expiresAt: existing.expiresAt,
             accessMode: existing.accessMode,
-            canWrite: existing.accessMode === "operator",
+            canWrite: existing.accessMode === "operator" && admin.role !== "observer",
           };
         }
         if (existing) await store.deleteAdminSession(sha256(existingToken), presence);
@@ -223,11 +299,11 @@ export async function registerAdminRoutes(
         expires: expiresAt,
       });
       return {
-        admin: { id: admin.id, username: admin.username },
+        admin: { id: admin.id, username: admin.username, role: admin.role },
         csrfToken,
         expiresAt,
         accessMode: session.accessMode,
-        canWrite: session.accessMode === "operator",
+        canWrite: session.accessMode === "operator" && admin.role !== "observer",
       };
     },
   );
@@ -240,12 +316,100 @@ export async function registerAdminRoutes(
   });
 
   app.get("/api/admin/dashboard", { preHandler: requireAdmin }, async (request) => ({
-    admin: { id: request.adminAuth!.admin.id, username: request.adminAuth!.admin.username },
+    admin: { id: request.adminAuth!.admin.id, username: request.adminAuth!.admin.username, role: request.adminAuth!.admin.role },
     csrfToken: request.adminAuth!.session.csrfToken,
     accessMode: request.adminAuth!.accessMode,
-    canWrite: request.adminAuth!.accessMode === "operator",
+    canWrite: request.adminAuth!.accessMode === "operator" && request.adminAuth!.admin.role !== "observer",
     counts: await store.dashboardCounts(),
   }));
+
+  app.get("/api/admin/accounts", { preHandler: [requireAdmin, requireOwner] }, async () => ({
+    items: (await store.listAdmins()).map(({ passwordHash: _passwordHash, ...admin }) => admin),
+  }));
+
+  app.post("/api/admin/accounts", { preHandler: [requireAdmin, requireCsrf, requireOperator, requireOwner] }, async (request, reply) => {
+    const body = adminCreateBody.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: body.error.issues[0]?.message ?? "Проверьте данные аккаунта" });
+    try {
+      const admin = await store.createAdmin(body.data.username, await hashSecret(body.data.password), body.data.role);
+      await audit(request, "admin.created", "admin", admin.id, { username: admin.username, role: admin.role });
+      const { passwordHash: _passwordHash, ...safeAdmin } = admin;
+      return reply.code(201).send(safeAdmin);
+    } catch {
+      return reply.code(409).send({ error: "Администратор с таким логином уже существует" });
+    }
+  });
+
+  app.patch("/api/admin/accounts/:id", { preHandler: [requireAdmin, requireCsrf, requireOperator, requireOwner] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    const body = adminUpdateBody.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте изменения аккаунта" });
+    if (params.data.id === request.adminAuth!.admin.id && (body.data.active === false || (body.data.role && body.data.role !== "owner"))) {
+      return reply.code(409).send({ error: "Нельзя отключить собственный аккаунт владельца или снять с него роль" });
+    }
+    const admins = await store.listAdmins();
+    const target = admins.find((admin) => admin.id === params.data.id);
+    if (!target) return reply.code(404).send({ error: "Аккаунт не найден" });
+    if (target.role === "owner" && (body.data.active === false || (body.data.role && body.data.role !== "owner"))) {
+      const activeOwners = admins.filter((admin) => admin.active && admin.role === "owner");
+      if (activeOwners.length <= 1) return reply.code(409).send({ error: "Нельзя отключить или понизить последнего владельца" });
+    }
+    const admin = await store.updateAdmin(params.data.id, {
+      role: body.data.role,
+      active: body.data.active,
+      passwordHash: body.data.password ? await hashSecret(body.data.password) : undefined,
+    });
+    if (!admin) return reply.code(404).send({ error: "Аккаунт не найден" });
+    await audit(request, "admin.updated", "admin", admin.id, { role: body.data.role, active: body.data.active, passwordChanged: Boolean(body.data.password) });
+    const { passwordHash: _passwordHash, ...safeAdmin } = admin;
+    return safeAdmin;
+  });
+
+  app.get("/api/admin/player-profiles", { preHandler: requireAdmin }, async (request, reply) => {
+    const query = profileQuery.safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "Некорректные параметры" });
+    const page = await store.listEscortPlayerProfiles(query.data.query, query.data.page, query.data.pageSize);
+    return { ...page, items: page.items.map(serializePlayerProfile) };
+  });
+
+  app.get("/api/admin/player-profiles/:id", { preHandler: requireAdmin }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Некорректный ID" });
+    const profile = await store.getEscortPlayerProfile(params.data.id);
+    return profile ? serializePlayerProfile(profile) : reply.code(404).send({ error: "Профиль не найден" });
+  });
+
+  app.get("/api/admin/audit-logs", { preHandler: requireAdmin }, async (request, reply) => {
+    const query = pageQuery.safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "Некорректные параметры" });
+    return store.listAuditLogs(query.data.page, query.data.pageSize);
+  });
+
+  app.get("/api/admin/reports/financial", { preHandler: requireAdmin }, async (request, reply) => {
+    const query = reportQuery.safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "Укажите период отчёта" });
+    const from = orderDate(query.data.from)!;
+    const to = orderDate(query.data.to)!;
+    if (from > to) return reply.code(400).send({ error: "Начало периода должно быть раньше конца" });
+    return serializeFinancial(await store.financialSummary(from, to));
+  });
+
+  app.get("/api/admin/reports/financial.csv", { preHandler: requireAdmin }, async (request, reply) => {
+    const query = reportQuery.safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "Укажите период отчёта" });
+    const from = orderDate(query.data.from)!;
+    const to = orderDate(query.data.to)!;
+    if (from > to) return reply.code(400).send({ error: "Начало периода должно быть раньше конца" });
+    const data = serializeFinancial(await store.financialSummary(from, to));
+    const rows = [
+      ["Период с", query.data.from], ["Период по", query.data.to], ["Заказов", data.orderCount],
+      ["Оборот UAH", data.grossUah], ["Директор UAH", data.directorUah], ["Создатель UAH", data.creatorUah],
+      ["Фонд сопровождающих UAH", data.escortPoolUah], ["Штрафы UAH", data.penaltiesUah],
+      ["Выплачено сопровождающим UAH", data.paidToEscortsUah], ["Не выплачено сопровождающим UAH", data.unpaidToEscortsUah],
+    ];
+    const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
+    return reply.type("text/csv; charset=utf-8").header("content-disposition", `attachment; filename="financial-${query.data.from}-${query.data.to}.csv"`).send(csv);
+  });
 
   app.get("/api/admin/exchange-rate", { preHandler: requireAdmin }, async (request, reply) => {
     const parsed = rateQuery.safeParse(request.query);
@@ -301,11 +465,15 @@ export async function registerAdminRoutes(
       }
       const exchangeRateMicros = parseRateToMicros(rate);
       const calculation = calculateEscortSplit(originalAmountMinor, exchangeRateMicros, parsed.data.escorts.length);
+      const reviewCode = randomCode(10);
+      const issuedAt = new Date();
       const order = await store.createEscortOrder({
         item: parsed.data.item,
         buyerName: parsed.data.buyerName,
         buyerContact: parsed.data.buyerContact || null,
         buyerGameId: parsed.data.buyerGameId,
+        reviewCodeHash: keyedHash(reviewCode, config.reviewCodePepper),
+        reviewCodeIssuedAt: issuedAt,
         originalAmountMinor,
         currency: parsed.data.currency,
         exchangeRateMicros,
@@ -319,11 +487,13 @@ export async function registerAdminRoutes(
         createdById: request.adminAuth!.admin.id,
         participants: parsed.data.escorts.map((escort, index) => ({
           name: escort.name,
+          gameId: escort.gameId,
           contact: escort.contact || null,
           shareUahMinor: calculation.shares[index]!,
         })),
       });
-      return reply.code(201).send(serializeEscortOrder(order));
+      await audit(request, "escort_order.created", "escort_order", order.id, { buyerGameId: parsed.data.buyerGameId });
+      return reply.code(201).send({ ...serializeEscortOrder(order), reviewCode });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Не удалось рассчитать сопровождение";
       return reply.code(message.includes("НБУ") ? 503 : 400).send({ error: message });
@@ -335,7 +505,22 @@ export async function registerAdminRoutes(
     const body = escortStatusBody.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте статус" });
     const order = await store.updateEscortOrderStatus(params.data.id, body.data.status);
+    if (order) await audit(request, "escort_order.status_changed", "escort_order", order.id, { status: body.data.status });
     return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Сопровождение не найдено" });
+  });
+
+  app.post("/api/admin/escort-orders/:id/review-code", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Некорректный ID" });
+    const reviewCode = randomCode(10);
+    try {
+      const order = await store.rotateEscortReviewCode(params.data.id, keyedHash(reviewCode, config.reviewCodePepper), new Date());
+      if (!order) return reply.code(404).send({ error: "Сопровождение не найдено" });
+      await audit(request, "escort_order.review_code_rotated", "escort_order", order.id);
+      return { ...serializeEscortOrder(order), reviewCode };
+    } catch (error) {
+      return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось обновить код" });
+    }
   });
 
   app.patch("/api/admin/escort-orders/:id/participants/:participantId", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
@@ -344,6 +529,7 @@ export async function registerAdminRoutes(
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте данные выплаты" });
     try {
       const order = await store.updateEscortParticipantPaid(params.data.id, params.data.participantId, body.data.paid);
+      if (order) await audit(request, "escort_participant.payment_changed", "escort_participant", params.data.participantId, { paid: body.data.paid, orderId: params.data.id });
       return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
     } catch (error) {
       return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось изменить выплату" });
@@ -361,6 +547,7 @@ export async function registerAdminRoutes(
         body.data.reason,
         request.adminAuth!.admin.id,
       );
+      if (order) await audit(request, "escort_participant.violation_added", "escort_participant", params.data.participantId, { orderId: params.data.id, reason: body.data.reason });
       return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
     } catch (error) {
       return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось применить штраф" });
@@ -374,8 +561,10 @@ export async function registerAdminRoutes(
     try {
       const order = await store.replaceEscortParticipant(params.data.id, params.data.participantId, {
         name: body.data.name,
+        gameId: body.data.gameId,
         contact: body.data.contact || null,
       });
+      if (order) await audit(request, "escort_participant.replaced", "escort_participant", params.data.participantId, { orderId: params.data.id, replacementGameId: body.data.gameId });
       return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
     } catch (error) {
       return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось заменить игрока" });
@@ -402,6 +591,7 @@ export async function registerAdminRoutes(
       moderatedById: request.adminAuth!.admin.id,
     });
     if (!review) return reply.code(404).send({ error: "Отзыв не найден" });
+    await audit(request, "review.moderated", "review", review.id, { status: body.data.status });
     const { contentHash: _contentHash, ipHash: _ipHash, ...safeReview } = review;
     return safeReview;
   });
@@ -433,6 +623,7 @@ export async function registerAdminRoutes(
     if (!ticket) return reply.code(404).send({ error: "Обращение не найдено" });
     if (ticket.status === "closed") return reply.code(409).send({ error: "Обращение закрыто" });
     const message = await store.addTicketMessage(ticket.id, "admin", body.data.message, request.adminAuth!.admin.id);
+    await audit(request, "support.message_sent", "support_ticket", ticket.id);
     return reply.code(201).send(message);
   });
 
@@ -442,6 +633,7 @@ export async function registerAdminRoutes(
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте статус" });
     const ticket = await store.updateTicketStatus(params.data.id, body.data.status, request.adminAuth!.admin.id);
     if (!ticket) return reply.code(404).send({ error: "Обращение не найдено" });
+    await audit(request, "support.status_changed", "support_ticket", ticket.id, { status: body.data.status });
     const { secretTokenHash: _secret, ipHash: _ip, ...safeTicket } = ticket;
     return safeTicket;
   });

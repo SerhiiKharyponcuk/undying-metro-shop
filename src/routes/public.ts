@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import type { AdminNotifier } from "../lib/telegram.js";
-import { cleanPlainText, containsMarkup, contentFingerprint, hashIp, hashSecret, randomCode, randomToken, verifySecret } from "../lib/security.js";
+import { cleanPlainText, containsMarkup, contentFingerprint, hashIp, hashSecret, keyedHash, randomCode, randomToken, verifySecret } from "../lib/security.js";
 import { verifyTurnstile } from "../lib/turnstile.js";
 import type { AppStore } from "../store/store.js";
 import type { SupportTicketRecord } from "../types/domain.js";
@@ -14,6 +14,7 @@ const reviewBody = z.object({
   name: plainText(2, 64),
   contact: z.union([plainText(3, 128), z.literal("")]).optional().default(""),
   buyerGameId: z.string().trim().regex(/^\d{5,20}$/, "Введите корректный PUBG ID"),
+  reviewCode: z.string().trim().toUpperCase().regex(/^[A-HJ-NP-Z2-9]{10}$/, "Введите 10-значный код покупки"),
   rating: z.coerce.number().int().min(1).max(5),
   text: plainText(10, 1200),
   turnstileToken: z.string().max(4096).optional().default(""),
@@ -157,13 +158,14 @@ export async function registerPublicRoutes(
         name: parsed.data.name,
         contact: parsed.data.contact || null,
         buyerGameId: parsed.data.buyerGameId,
+        reviewCodeHash: keyedHash(parsed.data.reviewCode, config.reviewCodePepper),
         rating: parsed.data.rating,
         text: parsed.data.text,
         contentHash,
         ipHash,
       });
       if (result.status === "not_found") {
-        return reply.code(403).send({ error: "PUBG ID не найден среди завершённых или оплаченных заказов" });
+        return reply.code(403).send({ error: "PUBG ID или одноразовый код покупки неверен" });
       }
       if (result.status === "already_reviewed") {
         return reply.code(409).send({ error: "Для покупок с этим PUBG ID отзыв уже оставлен" });

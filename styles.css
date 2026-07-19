@@ -2869,3 +2869,5 @@ body.modal-open {
     -webkit-line-clamp: 2;
   }
 }
+/* Verified buyer review helper */
+.form-help { margin:-4px 0 12px; color:rgba(211,235,232,.58); font-size:12px; line-height:1.55; }

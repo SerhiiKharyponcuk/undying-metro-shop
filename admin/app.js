@@ -10,6 +10,7 @@
   let csrfToken = sessionStorage.getItem("undying_admin_csrf") || "";
   let activeTicketId = null;
   let accessMode = "observer";
+  let currentRole = "observer";
   let heartbeatRunning = false;
   const ticketStatuses = {
     open: "Новое",
@@ -121,6 +122,8 @@
     csrfToken = dashboard.csrfToken;
     sessionStorage.setItem("undying_admin_csrf", csrfToken);
     document.querySelector("#adminUsername").textContent = dashboard.admin.username;
+    currentRole = dashboard.admin.role || "admin";
+    document.querySelector("#accountsTab").hidden = currentRole !== "owner";
     applyAccessMode(dashboard.accessMode === "observer" || dashboard.canWrite === false ? "observer" : "operator");
     renderCounts(dashboard.counts);
   }
@@ -139,7 +142,7 @@
     try {
       const dashboard = await api("/api/admin/dashboard", { method: "GET" });
       showApp(dashboard);
-      await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts()]);
+      await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadPlayerProfiles(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
     } catch (error) {
       showLogin(error.status === 401 ? "" : error.message);
     }
@@ -174,6 +177,10 @@
     button.addEventListener("click", () => {
       activateTab(button.dataset.adminTab);
       if (button.dataset.adminTab === "completed") void loadCompletedEscorts();
+      if (button.dataset.adminTab === "players") void loadPlayerProfiles();
+      if (button.dataset.adminTab === "reports") void loadFinancialReport();
+      if (button.dataset.adminTab === "audit") void loadAuditLogs();
+      if (button.dataset.adminTab === "accounts") void loadAccounts();
     });
   });
 
@@ -191,7 +198,7 @@
     return Number.isFinite(amount) ? `${amount.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₴` : "0,00 ₴";
   }
 
-  function addEscortRow(name = "", contact = "") {
+  function addEscortRow(name = "", gameId = "", contact = "") {
     if (escortPeople.children.length >= 3) return;
     const row = document.createElement("div");
     row.className = "escort-person";
@@ -205,6 +212,17 @@
     nameInput.required = true;
     nameInput.value = name;
     nameLabel.append(nameInput);
+    const gameIdLabel = document.createElement("label");
+    gameIdLabel.innerHTML = "<span>PUBG ID игрока</span>";
+    const gameIdInput = document.createElement("input");
+    gameIdInput.name = "escortGameId";
+    gameIdInput.inputMode = "numeric";
+    gameIdInput.pattern = "[0-9]{5,20}";
+    gameIdInput.minLength = 5;
+    gameIdInput.maxLength = 20;
+    gameIdInput.required = true;
+    gameIdInput.value = gameId;
+    gameIdLabel.append(gameIdInput);
     const contactLabel = document.createElement("label");
     contactLabel.innerHTML = "<span>Telegram / контакт</span>";
     const contactInput = document.createElement("input");
@@ -223,7 +241,7 @@
       renumberEscorts();
       updateEscortPreview();
     });
-    row.append(number, nameLabel, contactLabel, remove);
+    row.append(number, nameLabel, gameIdLabel, contactLabel, remove);
     escortPeople.append(row);
     renumberEscorts();
     updateEscortPreview();
@@ -301,6 +319,7 @@
     try {
       const escorts = [...escortPeople.children].map((row) => ({
         name: row.querySelector('[name="escortName"]').value,
+        gameId: row.querySelector('[name="escortGameId"]').value,
         contact: row.querySelector('[name="escortContact"]').value,
       }));
       const payload = {
@@ -314,8 +333,8 @@
         orderDate: escortForm.elements.orderDate.value,
         escorts,
       };
-      await api("/api/admin/escort-orders", { method: "POST", body: JSON.stringify(payload) });
-      status.textContent = "Расчёт сопровождения сохранён";
+      const created = await api("/api/admin/escort-orders", { method: "POST", body: JSON.stringify(payload) });
+      status.textContent = `Расчёт сохранён. Одноразовый код покупателя: ${created.reviewCode}`;
       escortForm.reset();
       escortForm.elements.orderDate.value = new Date().toISOString().slice(0, 10);
       escortForm.elements.exchangeRate.value = "1";
@@ -359,7 +378,20 @@
         await Promise.all([loadEscortOrders(), loadCompletedEscorts(), refreshDashboard()]);
       } catch (error) { globalStatus.textContent = error.message; }
     });
-    head.append(heading, statusSelect);
+    const headActions = document.createElement("div");
+    headActions.className = "escort-order__actions";
+    const reviewCodeButton = document.createElement("button");
+    reviewCodeButton.type = "button";
+    reviewCodeButton.textContent = order.reviewCodeConsumedAt ? "Отзыв оставлен" : "Выдать новый код отзыва";
+    writeControl(reviewCodeButton, Boolean(order.reviewCodeConsumedAt));
+    reviewCodeButton.addEventListener("click", async () => {
+      try {
+        const updated = await api(`/api/admin/escort-orders/${order.id}/review-code`, { method: "POST", body: "{}" });
+        globalStatus.textContent = `Новый одноразовый код для ${order.buyerName}: ${updated.reviewCode}`;
+      } catch (error) { globalStatus.textContent = error.message; }
+    });
+    headActions.append(statusSelect, reviewCodeButton);
+    head.append(heading, headActions);
     const values = document.createElement("div");
     values.className = "escort-order__money";
     [
@@ -381,7 +413,12 @@
       const person = document.createElement("span");
       const name = document.createElement("strong"); name.textContent = player.name;
       const note = document.createElement("small");
-      note.textContent = `${player.contact || "Без контакта"}${player.replacedAt ? " • Заменён" : ""}${player.excludedAt && !player.replacedAt ? " • Исключён после 4 нарушения" : ""}${player.replacementForId ? " • Вышел на замену" : ""}`;
+      const restriction = player.permanentlyBanned
+        ? " • Постоянный бан"
+        : player.suspendedUntil && new Date(player.suspendedUntil) > new Date()
+          ? ` • Отстранён до ${new Date(player.suspendedUntil).toLocaleString("ru-RU")}`
+          : "";
+      note.textContent = `PUBG ID ${player.playerGameId || "не указан"} • ${player.contact || "Без контакта"}${restriction}${player.replacedAt ? " • Заменён" : ""}${player.replacementForId ? " • Вышел на замену" : ""}`;
       person.append(name, note);
       const label = document.createElement("label");
       const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = player.paid; writeControl(checkbox, Boolean(player.replacedAt));
@@ -402,20 +439,24 @@
       const penalties = document.createElement("div"); penalties.className = "escort-player__penalties";
       player.penalties.forEach((penalty) => {
         const item = document.createElement("p");
-        item.textContent = `Штраф ${penalty.sequence}: −${penalty.percentage}% (${money(penalty.amountUah)}) • ${penalty.reason}`;
+        item.textContent = penalty.percentage
+          ? `Нарушение ${penalty.sequence}: −${penalty.percentage}% (${money(penalty.amountUah)}) • ${penalty.reason}`
+          : `Нарушение ${penalty.sequence}: постоянная блокировка • ${penalty.reason}`;
         penalties.append(item);
       });
 
       row.append(top, figures, penalties);
       if (canWrite() && !player.replacedAt && !player.paid) {
         const details = document.createElement("details"); details.className = "escort-actions";
-        const summary = document.createElement("summary"); summary.textContent = player.excludedAt ? "Игрок исключён — назначить замену" : "Штраф или замена игрока";
+        const summary = document.createElement("summary"); summary.textContent = player.permanentlyBanned ? "Игрок заблокирован — назначить замену" : player.suspendedUntil ? "Игрок отстранён — нарушение или замена" : "Нарушение или замена игрока";
         const actions = document.createElement("div"); actions.className = "escort-action-grid";
 
         const penaltyForm = document.createElement("form"); penaltyForm.className = "escort-mini-form escort-mini-form--penalty";
-        const penaltyCaption = document.createElement("span"); penaltyCaption.textContent = player.nextPenaltyPercent ? `Следующая ступень: −${player.nextPenaltyPercent}% от доли` : "Все ступени штрафов применены";
+        const penaltyCaption = document.createElement("span"); penaltyCaption.textContent = player.nextViolationAction === "permanent_ban"
+          ? "Следующее, 5-е нарушение за день: постоянный бан"
+          : player.nextPenaltyPercent ? `Следующая ступень: −${player.nextPenaltyPercent}% от доли` : "Все нарушения за сегодня зафиксированы";
         const reason = document.createElement("input"); reason.placeholder = "Причина нарушения"; reason.minLength = 3; reason.maxLength = 300; reason.required = true;
-        const penalize = document.createElement("button"); penalize.type = "submit"; penalize.disabled = !player.nextPenaltyPercent; penalize.textContent = player.nextPenaltyPercent ? `Штраф −${player.nextPenaltyPercent}%` : "Лимит штрафов";
+        const penalize = document.createElement("button"); penalize.type = "submit"; penalize.disabled = !player.nextViolationAction; penalize.textContent = player.nextViolationAction === "permanent_ban" ? "Зафиксировать 5-е нарушение" : player.nextPenaltyPercent ? `Штраф −${player.nextPenaltyPercent}%` : "Лимит нарушений";
         penaltyForm.append(penaltyCaption, reason, penalize);
         penaltyForm.addEventListener("submit", async (event) => {
           event.preventDefault(); penalize.disabled = true;
@@ -429,13 +470,14 @@
         const replacementForm = document.createElement("form"); replacementForm.className = "escort-mini-form escort-mini-form--replacement";
         const replacementCaption = document.createElement("span"); replacementCaption.textContent = "Передать оставшуюся долю новому игроку";
         const replacementName = document.createElement("input"); replacementName.placeholder = "Имя нового игрока"; replacementName.minLength = 2; replacementName.maxLength = 64; replacementName.required = true;
+        const replacementGameId = document.createElement("input"); replacementGameId.placeholder = "PUBG ID нового игрока"; replacementGameId.inputMode = "numeric"; replacementGameId.pattern = "[0-9]{5,20}"; replacementGameId.required = true;
         const replacementContact = document.createElement("input"); replacementContact.placeholder = "Telegram / контакт"; replacementContact.maxLength = 128;
         const replace = document.createElement("button"); replace.type = "submit"; replace.textContent = "Заменить";
-        replacementForm.append(replacementCaption, replacementName, replacementContact, replace);
+        replacementForm.append(replacementCaption, replacementName, replacementGameId, replacementContact, replace);
         replacementForm.addEventListener("submit", async (event) => {
           event.preventDefault(); replace.disabled = true;
           try {
-            await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}/replacement`, { method: "POST", body: JSON.stringify({ name: replacementName.value, contact: replacementContact.value }) });
+            await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}/replacement`, { method: "POST", body: JSON.stringify({ name: replacementName.value, gameId: replacementGameId.value, contact: replacementContact.value }) });
             globalStatus.textContent = "Игрок заменён, оставшаяся доля передана";
             await loadEscortOrders();
           } catch (error) { globalStatus.textContent = error.message; replace.disabled = false; }
@@ -660,9 +702,113 @@
     detail.append(head, meta, messages, form);
   }
 
+  function profileElement(profile) {
+    const card = document.createElement("article");
+    card.className = `profile-card${profile.permanentlyBanned ? " is-banned" : profile.suspendedUntil && new Date(profile.suspendedUntil) > new Date() ? " is-suspended" : ""}`;
+    const title = document.createElement("h3"); title.textContent = profile.displayName;
+    const meta = document.createElement("p"); meta.textContent = `PUBG ID ${profile.gameId}${profile.contact ? ` • ${profile.contact}` : ""}`;
+    const status = document.createElement("strong");
+    status.textContent = profile.permanentlyBanned ? "Постоянный бан" : profile.suspendedUntil && new Date(profile.suspendedUntil) > new Date()
+      ? `Отстранён до ${new Date(profile.suspendedUntil).toLocaleString("ru-RU")}` : "Допущен к сопровождениям";
+    const figures = document.createElement("div"); figures.className = "profile-card__figures";
+    [["Заказов", profile.orderCount], ["Нарушений", profile.penaltyCount], ["Начислено", money(profile.earnedUah)], ["Удержано", money(profile.withheldUah)]].forEach(([label, value]) => {
+      const item = document.createElement("span"); item.innerHTML = `<small>${label}</small><b>${value}</b>`; figures.append(item);
+    });
+    card.append(title, meta, status, figures);
+    return card;
+  }
+
+  async function loadPlayerProfiles() {
+    const container = document.querySelector("#playerProfiles");
+    if (!container) return;
+    container.replaceChildren(empty("Загрузка…", "Получаем профили игроков"));
+    try {
+      const query = document.querySelector("#playerSearch").value.trim();
+      const result = await api(`/api/admin/player-profiles?query=${encodeURIComponent(query)}&page=1&pageSize=100`, { method: "GET" });
+      container.replaceChildren();
+      if (!result.items.length) container.append(empty("Игроки не найдены", "Профили создаются при добавлении сопровождающих."));
+      result.items.forEach((profile) => container.append(profileElement(profile)));
+    } catch (error) { container.replaceChildren(empty("Ошибка загрузки", error.message)); }
+  }
+
+  function reportDates() {
+    const today = new Date().toISOString().slice(0, 10);
+    const month = `${today.slice(0, 8)}01`;
+    const from = document.querySelector("#reportFrom");
+    const to = document.querySelector("#reportTo");
+    if (!from.value) from.value = month;
+    if (!to.value) to.value = today;
+    return { from: from.value, to: to.value };
+  }
+
+  async function loadFinancialReport() {
+    const container = document.querySelector("#financialReport");
+    if (!container) return;
+    const { from, to } = reportDates();
+    try {
+      const report = await api(`/api/admin/reports/financial?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { method: "GET" });
+      container.replaceChildren();
+      [["Заказов", report.orderCount], ["Оборот", money(report.grossUah)], ["Директор 3%", money(report.directorUah)], ["Создатель 10%", money(report.creatorUah)],
+        ["Фонд игроков", money(report.escortPoolUah)], ["Штрафы", money(report.penaltiesUah)], ["Выплачено", money(report.paidToEscortsUah)], ["Ожидает выплаты", money(report.unpaidToEscortsUah)]].forEach(([label, value]) => {
+        const card = document.createElement("article"); const small = document.createElement("small"); small.textContent = label; const strong = document.createElement("strong"); strong.textContent = value; card.append(small, strong); container.append(card);
+      });
+    } catch (error) { container.replaceChildren(empty("Ошибка отчёта", error.message)); }
+  }
+
+  async function downloadFinancialReport() {
+    const { from, to } = reportDates();
+    try {
+      const response = await fetch(endpoint(`/api/admin/reports/financial.csv?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`), { credentials: "include" });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "Не удалось скачать отчёт");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a"); link.href = url; link.download = `financial-${from}-${to}.csv`; link.click(); URL.revokeObjectURL(url);
+    } catch (error) { globalStatus.textContent = error.message; }
+  }
+
+  async function loadAuditLogs() {
+    const container = document.querySelector("#auditLogs");
+    if (!container) return;
+    container.replaceChildren(empty("Загрузка…", "Получаем журнал действий"));
+    try {
+      const result = await api("/api/admin/audit-logs?page=1&pageSize=100", { method: "GET" });
+      container.replaceChildren();
+      if (!result.items.length) container.append(empty("Журнал пуст", "Новые действия появятся здесь."));
+      result.items.forEach((log) => {
+        const item = document.createElement("article"); item.className = "audit-card";
+        const title = document.createElement("strong"); title.textContent = log.action;
+        const meta = document.createElement("p"); meta.textContent = `${log.adminUsername || "Система"} • ${log.entityType}${log.entityId ? ` ${log.entityId}` : ""} • ${new Date(log.createdAt).toLocaleString("ru-RU")}`;
+        item.append(title, meta); container.append(item);
+      });
+    } catch (error) { container.replaceChildren(empty("Ошибка загрузки", error.message)); }
+  }
+
+  async function loadAccounts() {
+    const container = document.querySelector("#adminAccounts");
+    if (!container || currentRole !== "owner") return;
+    container.replaceChildren(empty("Загрузка…", "Получаем аккаунты"));
+    try {
+      const result = await api("/api/admin/accounts", { method: "GET" });
+      container.replaceChildren();
+      result.items.forEach((account) => {
+        const card = document.createElement("article"); card.className = "account-card";
+        const name = document.createElement("strong"); name.textContent = account.username;
+        const role = document.createElement("select"); writeControl(role);
+        [["owner", "Владелец"], ["director", "Директор"], ["admin", "Администратор"], ["observer", "Наблюдатель"]].forEach(([value, label]) => {
+          const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = account.role === value; role.append(option);
+        });
+        const active = document.createElement("label"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = account.active; writeControl(checkbox); active.append(checkbox, document.createTextNode(" Активен"));
+        const save = document.createElement("button"); save.type = "button"; save.textContent = "Сохранить"; writeControl(save);
+        save.addEventListener("click", async () => { try { await api(`/api/admin/accounts/${account.id}`, { method: "PATCH", body: JSON.stringify({ role: role.value, active: checkbox.checked }) }); await loadAccounts(); } catch (error) { globalStatus.textContent = error.message; } });
+        card.append(name, role, active, save); container.append(card);
+      });
+    } catch (error) { container.replaceChildren(empty("Ошибка загрузки", error.message)); }
+  }
+
   async function refreshDashboard() {
     const dashboard = await api("/api/admin/dashboard", { method: "GET" });
     csrfToken = dashboard.csrfToken;
+    currentRole = dashboard.admin.role || "admin";
+    document.querySelector("#accountsTab").hidden = currentRole !== "owner";
     sessionStorage.setItem("undying_admin_csrf", csrfToken);
     const changed = applyAccessMode(dashboard.accessMode === "observer" || dashboard.canWrite === false ? "observer" : "operator");
     renderCounts(dashboard.counts);
@@ -672,7 +818,7 @@
   async function refreshAll() {
     globalStatus.textContent = "";
     await refreshDashboard();
-    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts()]);
+    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadPlayerProfiles(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
     if (activeTicketId) await loadTicketDetail(activeTicketId);
   }
 
@@ -691,6 +837,10 @@
       await loadCompletedEscorts();
       return;
     }
+    if (activeTab === "players") { await loadPlayerProfiles(); return; }
+    if (activeTab === "reports") { await loadFinancialReport(); return; }
+    if (activeTab === "audit") { await loadAuditLogs(); return; }
+    if (activeTab === "accounts") { await loadAccounts(); return; }
     await loadReviews();
   }
 
@@ -720,6 +870,21 @@
   }
 
   document.querySelector("#refreshButton").addEventListener("click", () => void refreshAll());
+  document.querySelector("#playerSearch").addEventListener("input", () => void loadPlayerProfiles());
+  document.querySelector("#loadReport").addEventListener("click", () => void loadFinancialReport());
+  document.querySelector("#downloadReport").addEventListener("click", () => void downloadFinancialReport());
+  document.querySelector("#accountForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!form.reportValidity()) return;
+    busy(form, true);
+    try {
+      await api("/api/admin/accounts", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) });
+      form.reset();
+      await loadAccounts();
+    } catch (error) { globalStatus.textContent = error.message; }
+    finally { busy(form, false); }
+  });
   window.setInterval(async () => {
     if (adminApp.hidden || heartbeatRunning) return;
     heartbeatRunning = true;

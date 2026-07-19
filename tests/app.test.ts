@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import type { AppConfig } from "../src/config.js";
 import type { AdminNotifier } from "../src/lib/telegram.js";
-import { hashSecret } from "../src/lib/security.js";
+import { hashSecret, keyedHash } from "../src/lib/security.js";
 import type { ReviewRecord, SupportMessageRecord, SupportTicketRecord } from "../src/types/domain.js";
 import { MemoryStore } from "./memory-store.js";
 
@@ -24,6 +24,7 @@ const config: AppConfig = {
   corsOrigins: ["https://example.test"],
   cookieSecret: "c".repeat(40),
   ticketTokenPepper: "t".repeat(40),
+  reviewCodePepper: "r".repeat(40),
   ipHashSalt: "i".repeat(40),
   sessionTtlHours: 24,
   turnstileRequired: false,
@@ -41,7 +42,7 @@ describe("Undying Metro API", () => {
   beforeEach(async () => {
     store = new MemoryStore();
     notifier = new RecordingNotifier();
-    await store.createAdmin("admin", await hashSecret("very-secure-password"));
+    await store.createAdmin("admin", await hashSecret("very-secure-password"), "owner");
     app = await buildApp({ config, store, notifier, logger: false });
     await app.ready();
   });
@@ -54,6 +55,7 @@ describe("Undying Metro API", () => {
     name: "Сергей",
     contact: "@serhii_test",
     buyerGameId,
+    reviewCode: "ABCDEFGH23",
     rating: 5,
     text,
     turnstileToken: "",
@@ -87,6 +89,8 @@ describe("Undying Metro API", () => {
       buyerName: "Покупатель",
       buyerContact: null,
       buyerGameId,
+      reviewCodeHash: keyedHash("ABCDEFGH23", config.reviewCodePepper),
+      reviewCodeIssuedAt: new Date(),
       originalAmountMinor: 0n,
       currency: "UAH",
       exchangeRateMicros: 1_000_000n,
@@ -98,7 +102,7 @@ describe("Undying Metro API", () => {
       escortPoolMinor: 0n,
       orderDate: new Date("2026-07-19T00:00:00.000Z"),
       createdById: store.admins[0]!.id,
-      participants: [{ name: "Сопровождающий", contact: null, shareUahMinor: 0n }],
+      participants: [{ name: "Сопровождающий", gameId: "7000000001", contact: null, shareUahMinor: 0n }],
     });
     await store.updateEscortOrderStatus(order.id, "completed");
     return order;
@@ -108,6 +112,21 @@ describe("Undying Metro API", () => {
     const response = await app.inject({ method: "GET", url: "/" });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ status: "ok", service: "Undying Metro Shop API" });
+  });
+
+  it("раздаёт админ-панель с того же HTTPS origin, что и API", async () => {
+    const redirect = await app.inject({ method: "GET", url: "/admin" });
+    expect(redirect.statusCode).toBe(302);
+    expect(redirect.headers.location).toBe("/admin/");
+
+    const page = await app.inject({ method: "GET", url: "/admin/" });
+    expect(page.statusCode).toBe(200);
+    expect(page.headers["content-type"]).toContain("text/html");
+    expect(page.body).toContain("id=\"loginForm\"");
+
+    const runtimeConfig = await app.inject({ method: "GET", url: "/config.js" });
+    expect(runtimeConfig.statusCode).toBe(200);
+    expect(runtimeConfig.body).toContain("API_BASE_URL: window.location.origin");
   });
 
   it("показывает двух свободных менеджеров и фиксирует занятость на 3 минуты", async () => {
@@ -159,17 +178,18 @@ describe("Undying Metro API", () => {
     expect(xss.statusCode).toBe(400);
     const invalid = await app.inject({ method: "POST", url: "/api/reviews", payload: { ...reviewPayload("коротко"), rating: 9 } });
     expect(invalid.statusCode).toBe(400);
-  });
-
-  it("разрешает отзыв только по PUBG ID завершённого или оплаченного заказа", async () => {
     const invalidId = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload("Хороший сервис и быстрая помощь", "abc") });
     expect(invalidId.statusCode).toBe(400);
+  });
 
+  it("разрешает отзыв только по PUBG ID и одноразовому коду завершённого заказа", async () => {
     const unknownId = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload("Хороший сервис и быстрая помощь", "9999999999") });
     expect(unknownId.statusCode).toBe(403);
     expect(unknownId.json().error).toContain("PUBG ID");
 
     await seedCompletedPurchase("9999999999");
+    const wrongCode = await app.inject({ method: "POST", url: "/api/reviews", payload: { ...reviewPayload("Другой хороший отзыв для проверки", "9999999999"), reviewCode: "ZZZZZZZZZZ" } });
+    expect(wrongCode.statusCode).toBe(403);
     const verified = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload("Хороший сервис и быстрая помощь", "9999999999") });
     expect(verified.statusCode).toBe(201);
   });
@@ -291,9 +311,9 @@ describe("Undying Metro API", () => {
         currency: "UAH",
         orderDate: "2026-07-19",
         escorts: [
-          { name: "Игрок один", contact: "@player_one" },
-          { name: "Игрок два", contact: "@player_two" },
-          { name: "Игрок три", contact: "@player_three" },
+          { name: "Игрок один", gameId: "7000000001", contact: "@player_one" },
+          { name: "Игрок два", gameId: "7000000002", contact: "@player_two" },
+          { name: "Игрок три", gameId: "7000000003", contact: "@player_three" },
         ],
       },
     });
@@ -320,6 +340,42 @@ describe("Undying Metro API", () => {
     expect(dashboard.json().counts.completedEscortOrders).toBe(1);
   });
 
+  it("ведёт профили, финансовый отчёт, аудит и отдельные ролевые аккаунты", async () => {
+    const { cookie, csrf } = await login();
+    const created = await app.inject({
+      method: "POST", url: "/api/admin/escort-orders", headers: { cookie, "x-csrf-token": csrf },
+      payload: { item: "Проверка операций", buyerName: "Покупатель", buyerGameId: "2234567890", amount: "750", currency: "UAH", orderDate: "2026-07-19",
+        escorts: [{ name: "Профильный игрок", gameId: "7000000090", contact: "@profile_player" }] },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().reviewCode).toMatch(/^[A-HJ-NP-Z2-9]{10}$/);
+
+    const profiles = await app.inject({ method: "GET", url: "/api/admin/player-profiles?query=7000000090", headers: { cookie } });
+    expect(profiles.statusCode).toBe(200);
+    expect(profiles.json().items[0]).toMatchObject({ gameId: "7000000090", orderCount: 1 });
+
+    const report = await app.inject({ method: "GET", url: "/api/admin/reports/financial?from=2026-07-01&to=2026-07-31", headers: { cookie } });
+    expect(report.json()).toMatchObject({ orderCount: 1, grossUah: "750.00", directorUah: "22.50", creatorUah: "75.00" });
+    const csv = await app.inject({ method: "GET", url: "/api/admin/reports/financial.csv?from=2026-07-01&to=2026-07-31", headers: { cookie } });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.headers["content-type"]).toContain("text/csv");
+
+    const account = await app.inject({
+      method: "POST", url: "/api/admin/accounts", headers: { cookie, "x-csrf-token": csrf },
+      payload: { username: "watcher", password: "very-secure-observer", role: "observer" },
+    });
+    expect(account.statusCode).toBe(201);
+    const observerLogin = await app.inject({ method: "POST", url: "/api/admin/login", payload: { username: "watcher", password: "very-secure-observer" } });
+    const observerCookie = String(observerLogin.headers["set-cookie"]).split(";")[0];
+    expect(observerLogin.json()).toMatchObject({ canWrite: false, admin: { role: "observer" } });
+    const denied = await app.inject({ method: "PATCH", url: `/api/admin/escort-orders/${created.json().id}/status`,
+      headers: { cookie: observerCookie, "x-csrf-token": observerLogin.json().csrfToken }, payload: { status: "completed" } });
+    expect(denied.statusCode).toBe(403);
+
+    const audit = await app.inject({ method: "GET", url: "/api/admin/audit-logs?page=1&pageSize=50", headers: { cookie } });
+    expect(audit.json().items.map((item: any) => item.action)).toEqual(expect.arrayContaining(["escort_order.created", "admin.created"]));
+  });
+
   it("исключает отменённое сопровождение из банков директора и создателя", async () => {
     const { cookie, csrf } = await login();
     const created = await app.inject({
@@ -333,7 +389,7 @@ describe("Undying Metro API", () => {
         amount: "1000",
         currency: "UAH",
         orderDate: "2026-07-19",
-        escorts: [{ name: "Игрок" }],
+        escorts: [{ name: "Игрок", gameId: "7000000010" }],
       },
     });
     expect(created.statusCode).toBe(201);
@@ -367,7 +423,7 @@ describe("Undying Metro API", () => {
         amount: "100",
         currency: "UAH",
         orderDate: "2026-07-19",
-        escorts: [1, 2, 3, 4].map((number) => ({ name: `Игрок ${number}` })),
+        escorts: [1, 2, 3, 4].map((number) => ({ name: `Игрок ${number}`, gameId: `70000001${number}` })),
       },
     });
     expect(response.statusCode).toBe(400);
@@ -390,7 +446,7 @@ describe("Undying Metro API", () => {
       method: "POST",
       url: "/api/admin/escort-orders",
       headers: { cookie, "x-csrf-token": csrf },
-      payload: { item: "Сопровождение", buyerName: "Покупатель", buyerGameId: "1234567890", amount: "500", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок" }] },
+      payload: { item: "Сопровождение", buyerName: "Покупатель", buyerGameId: "1234567890", amount: "500", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок", gameId: "7000000020" }] },
     });
     const order = store.escortOrders[0]!;
     const participant = order.participants[0]!;
@@ -410,7 +466,7 @@ describe("Undying Metro API", () => {
       method: "POST",
       url: "/api/admin/escort-orders",
       headers: { cookie, "x-csrf-token": csrf },
-      payload: { item: "Сопровождение", buyerName: "Покупатель", buyerGameId: "1234567890", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок" }] },
+      payload: { item: "Сопровождение", buyerName: "Покупатель", buyerGameId: "1234567890", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок", gameId: "7000000030" }] },
     });
     const participantId = created.json().participants[0].id;
     let lastResponse;
@@ -429,6 +485,12 @@ describe("Undying Metro API", () => {
     expect(player.payoutUah).toBe("174.00");
     expect(player).toMatchObject({ active: false, nextPenaltyPercent: null });
     expect(player.excludedAt).toBeTruthy();
+    expect(player.suspendedUntil).toBeTruthy();
+    const suspendedOrder = await app.inject({
+      method: "POST", url: "/api/admin/escort-orders", headers: { cookie, "x-csrf-token": csrf },
+      payload: { item: "Повторное сопровождение", buyerName: "Другой покупатель", buyerGameId: "3234567890", amount: "500", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок", gameId: "7000000030" }] },
+    });
+    expect(suspendedOrder.statusCode).toBe(400);
     const bank = await app.inject({ method: "GET", url: "/api/admin/shop-bank", headers: { cookie } });
     expect(bank.json()).toMatchObject({ penaltyBalanceUah: "696.00", directorBalanceUah: "30.00", creatorBalanceUah: "100.00" });
     const fifth = await app.inject({
@@ -437,7 +499,15 @@ describe("Undying Metro API", () => {
       headers: { cookie, "x-csrf-token": csrf },
       payload: { reason: "Повторное нарушение" },
     });
-    expect(fifth.statusCode).toBe(409);
+    expect(fifth.statusCode).toBe(200);
+    expect(fifth.json().participants[0]).toMatchObject({ permanentlyBanned: true, dailyViolationCount: 5 });
+    const sixth = await app.inject({
+      method: "POST",
+      url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}/penalties`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { reason: "Шестое нарушение" },
+    });
+    expect(sixth.statusCode).toBe(409);
   });
 
   it("сохраняет историю замены и передаёт новому игроку остаток доли", async () => {
@@ -446,7 +516,7 @@ describe("Undying Metro API", () => {
       method: "POST",
       url: "/api/admin/escort-orders",
       headers: { cookie, "x-csrf-token": csrf },
-      payload: { item: "Сопровождение", buyerName: "Покупатель", buyerGameId: "1234567890", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Первый игрок" }] },
+      payload: { item: "Сопровождение", buyerName: "Покупатель", buyerGameId: "1234567890", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Первый игрок", gameId: "7000000040" }] },
     });
     const participantId = created.json().participants[0].id;
     await app.inject({
@@ -459,7 +529,7 @@ describe("Undying Metro API", () => {
       method: "POST",
       url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}/replacement`,
       headers: { cookie, "x-csrf-token": csrf },
-      payload: { name: "Новый игрок", contact: "@new_player" },
+      payload: { name: "Новый игрок", gameId: "7000000041", contact: "@new_player" },
     });
     expect(replaced.statusCode).toBe(200);
     const [oldPlayer, newPlayer] = replaced.json().participants;

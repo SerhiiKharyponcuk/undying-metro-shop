@@ -13,7 +13,7 @@
     <link rel="preload" href="assets/undying-metro-avatar.webp" as="image" />
     <script>document.documentElement.classList.add("js");</script>
     <script src="config.js?v=6"></script>
-    <link rel="stylesheet" href="styles.css?v=7" />
+    <link rel="stylesheet" href="styles.css?v=8" />
   </head>
 
   <body>
@@ -227,7 +227,11 @@
                 <label class="field"><span>Ваше имя</span><input name="name" minlength="2" maxlength="64" autocomplete="name" required /></label>
                 <label class="field"><span>Telegram <small>(необязательно)</small></span><input name="contact" maxlength="128" placeholder="@username" autocomplete="off" /></label>
               </div>
-              <label class="field"><span>PUBG ID покупателя</span><input name="buyerGameId" inputmode="numeric" pattern="[0-9]{5,20}" minlength="5" maxlength="20" placeholder="ID из завершённого заказа" autocomplete="off" required /><small>Отзыв доступен только покупателям с завершённым или оплаченным заказом.</small></label>
+              <div class="field-grid field-grid--two">
+                <label class="field"><span>PUBG ID покупателя</span><input name="buyerGameId" inputmode="numeric" pattern="[0-9]{5,20}" minlength="5" maxlength="20" placeholder="ID из завершённого заказа" autocomplete="off" required /></label>
+                <label class="field"><span>Одноразовый код покупки</span><input name="reviewCode" minlength="10" maxlength="10" pattern="[A-HJ-NP-Z2-9]{10}" placeholder="Например: A7K9M2P4XZ" autocomplete="off" autocapitalize="characters" required /></label>
+              </div>
+              <p class="form-help">PUBG ID и код выдаются покупателю администратором. Код действует только для одного завершённого или оплаченного заказа.</p>
               <fieldset class="rating-field">
                 <legend>Ваша оценка</legend>
                 <div class="rating-input" aria-label="Оценка от 1 до 5">
@@ -391,7 +395,7 @@
     </div>
 
     <script src="script.js?v=6"></script>
-    <script src="community.js?v=7"></script>
+    <script src="community.js?v=8"></script>
     <script src="managers.js?v=6"></script>
   </body>
 </html>
