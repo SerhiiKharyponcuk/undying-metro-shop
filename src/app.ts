@@ -24,11 +24,11 @@ export async function buildApp(input: {
           redact: [
             "req.headers.authorization",
             "req.headers.cookie",
-            "req.headers.x-ticket-token",
+            "req.headers['x-ticket-token']",
             "res.headers.set-cookie",
-            "body.password",
-            "body.token",
-            "body.turnstileToken",
+            "req.body.password",
+            "req.body.token",
+            "req.body.turnstileToken",
           ],
         }
       : false,
