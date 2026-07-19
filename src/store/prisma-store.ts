@@ -14,7 +14,7 @@ import type {
   SupportTicketRecord,
   TicketStatus,
 } from "../types/domain.js";
-import type { AppStore, NewEscortOrder, NewReview, NewTicket } from "./store.js";
+import type { AdminSessionPresence, AppStore, NewEscortOrder, NewReview, NewTicket, VerifiedReviewResult } from "./store.js";
 import { calculatePenaltyAmount } from "../lib/escort-calculation.js";
 
 const escortOrderInclude = {
@@ -23,6 +23,69 @@ const escortOrderInclude = {
     orderBy: { createdAt: "asc" as const },
   },
 };
+
+const ACCESS_TRANSACTION_RETRIES = 3;
+
+function isAccessTransactionConflict(error: unknown): boolean {
+  const code = (error as { code?: unknown })?.code;
+  return code === "P2002" || code === "P2034";
+}
+
+async function withAccessTransaction<T>(
+  prisma: PrismaClient,
+  operation: (database: any) => Promise<T>,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < ACCESS_TRANSACTION_RETRIES; attempt += 1) {
+    try {
+      return await prisma.$transaction(operation, { isolationLevel: "Serializable" });
+    } catch (error) {
+      lastError = error;
+      if (!isAccessTransactionConflict(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
+async function reconcileAdminAccess(database: any, presence: AdminSessionPresence): Promise<void> {
+  const { activeSince, now } = presence;
+  await database.adminSession.updateMany({
+    where: {
+      accessMode: "operator",
+      OR: [
+        { expiresAt: { lte: now } },
+        { lastSeenAt: { lt: activeSince } },
+        { admin: { is: { active: false } } },
+      ],
+    },
+    data: { accessMode: "observer" },
+  });
+
+  const operator = await database.adminSession.findFirst({
+    where: {
+      accessMode: "operator",
+      expiresAt: { gt: now },
+      lastSeenAt: { gte: activeSince },
+      admin: { is: { active: true } },
+    },
+    select: { id: true },
+  });
+  if (operator) return;
+
+  const candidate = await database.adminSession.findFirst({
+    where: {
+      accessMode: "observer",
+      expiresAt: { gt: now },
+      lastSeenAt: { gte: activeSince },
+      admin: { is: { active: true } },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
+  if (candidate) {
+    await database.adminSession.update({ where: { id: candidate.id }, data: { accessMode: "operator" } });
+  }
+}
 
 function mapAdmin(value: any): AdminRecord {
   return {
@@ -40,7 +103,10 @@ function mapSession(value: any): AdminSessionRecord {
     tokenHash: value.tokenHash,
     csrfToken: value.csrfToken,
     adminId: value.adminId,
+    accessMode: value.accessMode,
     expiresAt: value.expiresAt,
+    createdAt: value.createdAt,
+    lastSeenAt: value.lastSeenAt,
     admin: mapAdmin(value.admin),
   };
 }
@@ -54,6 +120,8 @@ function mapReview(value: any): ReviewRecord {
     text: value.text,
     status: value.status,
     adminReply: value.adminReply,
+    buyerGameId: value.buyerGameId,
+    escortOrderId: value.escortOrderId,
     contentHash: value.contentHash,
     ipHash: value.ipHash,
     createdAt: value.createdAt,
@@ -98,12 +166,14 @@ function mapEscortOrder(value: any): EscortOrderRecord {
     item: value.item,
     buyerName: value.buyerName,
     buyerContact: value.buyerContact,
+    buyerGameId: value.buyerGameId,
     originalAmountMinor: value.originalAmountMinor,
     currency: value.currency,
     exchangeRateMicros: value.exchangeRateMicros,
     rateSource: value.rateSource,
     amountUahMinor: value.amountUahMinor,
     developerAmountMinor: value.developerAmountMinor,
+    directorAmountMinor: value.directorAmountMinor,
     creatorAmountMinor: value.creatorAmountMinor,
     escortPoolMinor: value.escortPoolMinor,
     orderDate: value.orderDate,
@@ -162,8 +232,32 @@ export class PrismaStore implements AppStore {
     return { claimed: false, busyUntil: current?.busyUntil ?? now };
   }
 
-  async createReview(input: NewReview): Promise<ReviewRecord> {
-    return mapReview(await this.prisma.review.create({ data: input as any }));
+  async createVerifiedReview(input: NewReview): Promise<VerifiedReviewResult> {
+    try {
+      return await this.prisma.$transaction(async (database) => {
+        const eligibleWhere = {
+          buyerGameId: input.buyerGameId,
+          status: { in: ["completed", "paid"] as EscortOrderStatus[] },
+        };
+        const eligible = await database.escortOrder.findFirst({ where: eligibleWhere, select: { id: true } });
+        if (!eligible) return { status: "not_found" as const };
+
+        const available = await database.escortOrder.findFirst({
+          where: { ...eligibleWhere, review: { is: null } },
+          orderBy: [{ orderDate: "desc" }, { createdAt: "desc" }],
+          select: { id: true },
+        });
+        if (!available) return { status: "already_reviewed" as const };
+
+        const review = await database.review.create({
+          data: { ...input, escortOrderId: available.id },
+        });
+        return { status: "created" as const, review: mapReview(review) };
+      });
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === "P2002") return { status: "already_reviewed" };
+      throw error;
+    }
   }
 
   async hasRecentDuplicateReview(ipHash: string, contentHash: string, since: Date): Promise<boolean> {
@@ -413,6 +507,14 @@ export class PrismaStore implements AppStore {
     return result._sum.creatorAmountMinor ?? 0n;
   }
 
+  async getDirectorBankBalance(): Promise<bigint> {
+    const result = await this.prisma.escortOrder.aggregate({
+      where: { status: { not: "cancelled" } },
+      _sum: { directorAmountMinor: true },
+    });
+    return result._sum.directorAmountMinor ?? 0n;
+  }
+
   async findAdminByUsername(username: string): Promise<AdminRecord | null> {
     const value = await this.prisma.admin.findUnique({ where: { username } });
     return value ? mapAdmin(value) : null;
@@ -422,21 +524,46 @@ export class PrismaStore implements AppStore {
     return mapAdmin(await this.prisma.admin.create({ data: { username, passwordHash } }));
   }
 
-  async createAdminSession(input: { tokenHash: string; csrfToken: string; adminId: string; expiresAt: Date }): Promise<AdminSessionRecord> {
-    return mapSession(await this.prisma.adminSession.create({ data: input, include: { admin: true } }));
+  async createAdminSession(
+    input: { tokenHash: string; csrfToken: string; adminId: string; expiresAt: Date },
+    presence: AdminSessionPresence,
+  ): Promise<AdminSessionRecord> {
+    const value = await withAccessTransaction(this.prisma, async (database) => {
+      await database.adminSession.deleteMany({ where: { expiresAt: { lte: presence.now } } });
+      await reconcileAdminAccess(database, presence);
+      const operator = await database.adminSession.findFirst({ where: { accessMode: "operator" }, select: { id: true } });
+      return database.adminSession.create({
+        data: {
+          ...input,
+          accessMode: operator ? "observer" : "operator",
+          lastSeenAt: presence.now,
+        },
+        include: { admin: true },
+      });
+    });
+    return mapSession(value);
   }
 
-  async findAdminSession(tokenHash: string): Promise<AdminSessionRecord | null> {
-    const value = await this.prisma.adminSession.findUnique({ where: { tokenHash }, include: { admin: true } });
+  async refreshAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<AdminSessionRecord | null> {
+    const value = await withAccessTransaction(this.prisma, async (database) => {
+      const session = await database.adminSession.findUnique({ where: { tokenHash }, include: { admin: true } });
+      if (!session || !session.admin.active || session.expiresAt <= presence.now) {
+        if (session) await database.adminSession.delete({ where: { id: session.id } });
+        await reconcileAdminAccess(database, presence);
+        return null;
+      }
+      await database.adminSession.update({ where: { id: session.id }, data: { lastSeenAt: presence.now } });
+      await reconcileAdminAccess(database, presence);
+      return database.adminSession.findUnique({ where: { id: session.id }, include: { admin: true } });
+    });
     return value ? mapSession(value) : null;
   }
 
-  async touchAdminSession(id: string, now: Date): Promise<void> {
-    await this.prisma.adminSession.update({ where: { id }, data: { lastSeenAt: now } });
-  }
-
-  async deleteAdminSession(tokenHash: string): Promise<void> {
-    await this.prisma.adminSession.deleteMany({ where: { tokenHash } });
+  async deleteAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<void> {
+    await withAccessTransaction(this.prisma, async (database) => {
+      await database.adminSession.deleteMany({ where: { tokenHash } });
+      await reconcileAdminAccess(database, presence);
+    });
   }
 
   async deleteExpiredAdminSessions(now: Date): Promise<void> {
@@ -444,13 +571,14 @@ export class PrismaStore implements AppStore {
   }
 
   async dashboardCounts(): Promise<DashboardCounts> {
-    const [pendingReviews, openTickets, inProgressTickets, totalApprovedReviews] = await this.prisma.$transaction([
+    const [pendingReviews, openTickets, inProgressTickets, totalApprovedReviews, completedEscortOrders] = await this.prisma.$transaction([
       this.prisma.review.count({ where: { status: "pending" } }),
       this.prisma.supportTicket.count({ where: { status: "open" } }),
       this.prisma.supportTicket.count({ where: { status: "in_progress" } }),
       this.prisma.review.count({ where: { status: "approved" } }),
+      this.prisma.escortOrder.count({ where: { status: { in: ["completed", "paid"] } } }),
     ]);
-    return { pendingReviews, openTickets, inProgressTickets, totalApprovedReviews };
+    return { pendingReviews, openTickets, inProgressTickets, totalApprovedReviews, completedEscortOrders };
   }
 
   async createNotificationLog(input: { eventType: string; destination: string; status: "sent" | "failed" | "skipped"; error?: string }): Promise<void> {

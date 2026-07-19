@@ -13,6 +13,7 @@ export type NotificationState = "sent" | "failed" | "skipped";
 export type OrderCurrency = "UAH" | "EUR" | "USD";
 export type EscortOrderStatus = "planned" | "completed" | "paid" | "cancelled";
 export type ExchangeRateSource = "uah" | "nbu" | "manual";
+export type AdminAccessMode = "operator" | "observer";
 
 export interface AdminRecord {
   id: string;
@@ -27,7 +28,10 @@ export interface AdminSessionRecord {
   tokenHash: string;
   csrfToken: string;
   adminId: string;
+  accessMode: AdminAccessMode;
   expiresAt: Date;
+  createdAt: Date;
+  lastSeenAt: Date;
   admin: AdminRecord;
 }
 
@@ -39,6 +43,8 @@ export interface ReviewRecord {
   text: string;
   status: ReviewStatus;
   adminReply: string | null;
+  buyerGameId: string | null;
+  escortOrderId: string | null;
   contentHash: string;
   ipHash: string;
   createdAt: Date;
@@ -84,6 +90,7 @@ export interface DashboardCounts {
   openTickets: number;
   inProgressTickets: number;
   totalApprovedReviews: number;
+  completedEscortOrders: number;
 }
 
 export interface ManagerAvailabilityRecord {
@@ -127,12 +134,14 @@ export interface EscortOrderRecord {
   item: string;
   buyerName: string;
   buyerContact: string | null;
+  buyerGameId: string | null;
   originalAmountMinor: bigint;
   currency: OrderCurrency;
   exchangeRateMicros: bigint;
   rateSource: ExchangeRateSource;
   amountUahMinor: bigint;
   developerAmountMinor: bigint;
+  directorAmountMinor: bigint;
   creatorAmountMinor: bigint;
   escortPoolMinor: bigint;
   orderDate: Date;

@@ -7,6 +7,11 @@ import { cleanPlainText, constantTimeEqual, containsMarkup, hashSecret, randomTo
 import type { AppStore } from "../store/store.js";
 
 const COOKIE_NAME = "undying_admin_session";
+const ADMIN_PRESENCE_WINDOW_MS = 60_000;
+
+function adminPresence(now = new Date()) {
+  return { now, activeSince: new Date(now.getTime() - ADMIN_PRESENCE_WINDOW_MS) };
+}
 
 const plainText = (minimum: number, maximum: number) =>
   z.string().transform(cleanPlainText).pipe(z.string().min(minimum).max(maximum).refine((value) => !containsMarkup(value), "HTML и скрипты запрещены"));
@@ -40,6 +45,7 @@ const escortOrderBody = z.object({
   item: plainText(2, 160),
   buyerName: plainText(2, 64),
   buyerContact: z.union([plainText(3, 128), z.literal("")]).optional().default(""),
+  buyerGameId: z.string().trim().regex(/^\d{5,20}$/, "Укажите корректный PUBG ID покупателя"),
   amount: scalarText,
   currency: z.enum(["UAH", "EUR", "USD"]),
   exchangeRate: z.union([scalarText, z.literal("")]).optional().default(""),
@@ -82,11 +88,13 @@ function serializeEscortOrder(order: any) {
     item: order.item,
     buyerName: order.buyerName,
     buyerContact: order.buyerContact,
+    buyerGameId: order.buyerGameId,
     originalAmount: formatMinor(order.originalAmountMinor),
     currency: order.currency,
     exchangeRate: formatRate(order.exchangeRateMicros),
     rateSource: order.rateSource,
     amountUah: formatMinor(order.amountUahMinor),
+    directorAmountUah: formatMinor(order.directorAmountMinor),
     creatorAmountUah: formatMinor(order.creatorAmountMinor),
     escortPoolUah: formatMinor(order.escortPoolMinor),
     orderDate: order.orderDate,
@@ -145,13 +153,11 @@ export async function registerAdminRoutes(
   const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
     const rawToken = sessionCookie(request);
     if (!rawToken) return reply.code(401).send({ error: "Требуется вход администратора" });
-    const session = await store.findAdminSession(sha256(rawToken));
-    if (!session || !session.admin.active || session.expiresAt <= new Date()) {
-      if (rawToken) await store.deleteAdminSession(sha256(rawToken));
+    const session = await store.refreshAdminSession(sha256(rawToken), adminPresence());
+    if (!session) {
       return reply.code(401).send({ error: "Сессия истекла" });
     }
-    request.adminAuth = { admin: session.admin, session };
-    await store.touchAdminSession(session.id, new Date());
+    request.adminAuth = { admin: session.admin, session, accessMode: session.accessMode };
   };
 
   const requireCsrf = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -160,6 +166,16 @@ export async function registerAdminRoutes(
     const token = typeof header === "string" ? header : "";
     if (!token || !constantTimeEqual(token, request.adminAuth.session.csrfToken)) {
       return reply.code(403).send({ error: "Недействительный CSRF-токен" });
+    }
+  };
+
+  const requireOperator = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!request.adminAuth) return reply.code(401).send({ error: "Требуется вход администратора" });
+    if (request.adminAuth.accessMode !== "operator") {
+      return reply.code(403).send({
+        code: "ADMIN_READ_ONLY",
+        error: "Панель открыта в режиме наблюдения. Изменения может вносить только первый активный администратор.",
+      });
     }
   };
 
@@ -176,11 +192,28 @@ export async function registerAdminRoutes(
       else await hashSecret(parsed.data.password);
       if (!admin || !admin.active || !valid) return reply.code(401).send({ error: "Неверный логин или пароль" });
 
-      await store.deleteExpiredAdminSessions(new Date());
+      const presence = adminPresence();
+      const existingToken = sessionCookie(request);
+      if (existingToken) {
+        const existing = await store.refreshAdminSession(sha256(existingToken), presence);
+        if (existing?.admin.id === admin.id) {
+          return {
+            admin: { id: admin.id, username: admin.username },
+            csrfToken: existing.csrfToken,
+            expiresAt: existing.expiresAt,
+            accessMode: existing.accessMode,
+            canWrite: existing.accessMode === "operator",
+          };
+        }
+        if (existing) await store.deleteAdminSession(sha256(existingToken), presence);
+      }
       const rawToken = randomToken();
       const csrfToken = randomToken(24);
-      const expiresAt = new Date(Date.now() + config.sessionTtlHours * 60 * 60 * 1000);
-      await store.createAdminSession({ tokenHash: sha256(rawToken), csrfToken, adminId: admin.id, expiresAt });
+      const expiresAt = new Date(presence.now.getTime() + config.sessionTtlHours * 60 * 60 * 1000);
+      const session = await store.createAdminSession(
+        { tokenHash: sha256(rawToken), csrfToken, adminId: admin.id, expiresAt },
+        presence,
+      );
       reply.setCookie(COOKIE_NAME, rawToken, {
         path: "/api/admin",
         httpOnly: true,
@@ -189,13 +222,19 @@ export async function registerAdminRoutes(
         signed: true,
         expires: expiresAt,
       });
-      return { admin: { id: admin.id, username: admin.username }, csrfToken, expiresAt };
+      return {
+        admin: { id: admin.id, username: admin.username },
+        csrfToken,
+        expiresAt,
+        accessMode: session.accessMode,
+        canWrite: session.accessMode === "operator",
+      };
     },
   );
 
   app.post("/api/admin/logout", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
     const token = sessionCookie(request);
-    if (token) await store.deleteAdminSession(sha256(token));
+    if (token) await store.deleteAdminSession(sha256(token), adminPresence());
     reply.clearCookie(COOKIE_NAME, { path: "/api/admin" });
     return { success: true };
   });
@@ -203,6 +242,8 @@ export async function registerAdminRoutes(
   app.get("/api/admin/dashboard", { preHandler: requireAdmin }, async (request) => ({
     admin: { id: request.adminAuth!.admin.id, username: request.adminAuth!.admin.username },
     csrfToken: request.adminAuth!.session.csrfToken,
+    accessMode: request.adminAuth!.accessMode,
+    canWrite: request.adminAuth!.accessMode === "operator",
     counts: await store.dashboardCounts(),
   }));
 
@@ -225,19 +266,21 @@ export async function registerAdminRoutes(
   });
 
   app.get("/api/admin/shop-bank", { preHandler: requireAdmin }, async () => {
-    const [penaltyBalance, creatorBalance] = await Promise.all([
+    const [penaltyBalance, directorBalance, creatorBalance] = await Promise.all([
       store.getShopBankBalance(),
+      store.getDirectorBankBalance(),
       store.getCreatorBankBalance(),
     ]);
     return {
       currency: "UAH",
       balanceUah: formatMinor(penaltyBalance),
       penaltyBalanceUah: formatMinor(penaltyBalance),
+      directorBalanceUah: formatMinor(directorBalance),
       creatorBalanceUah: formatMinor(creatorBalance),
     };
   });
 
-  app.post("/api/admin/escort-orders", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+  app.post("/api/admin/escort-orders", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
     const parsed = escortOrderBody.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте данные сопровождения" });
     const date = orderDate(parsed.data.orderDate);
@@ -262,12 +305,14 @@ export async function registerAdminRoutes(
         item: parsed.data.item,
         buyerName: parsed.data.buyerName,
         buyerContact: parsed.data.buyerContact || null,
+        buyerGameId: parsed.data.buyerGameId,
         originalAmountMinor,
         currency: parsed.data.currency,
         exchangeRateMicros,
         rateSource,
         amountUahMinor: calculation.amountUahMinor,
         developerAmountMinor: 0n,
+        directorAmountMinor: calculation.directorAmountMinor,
         creatorAmountMinor: calculation.creatorAmountMinor,
         escortPoolMinor: calculation.escortPoolMinor,
         orderDate: date,
@@ -285,7 +330,7 @@ export async function registerAdminRoutes(
     }
   });
 
-  app.patch("/api/admin/escort-orders/:id/status", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+  app.patch("/api/admin/escort-orders/:id/status", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
     const params = idParams.safeParse(request.params);
     const body = escortStatusBody.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте статус" });
@@ -293,7 +338,7 @@ export async function registerAdminRoutes(
     return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Сопровождение не найдено" });
   });
 
-  app.patch("/api/admin/escort-orders/:id/participants/:participantId", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+  app.patch("/api/admin/escort-orders/:id/participants/:participantId", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
     const params = participantParams.safeParse(request.params);
     const body = participantPaidBody.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте данные выплаты" });
@@ -305,7 +350,7 @@ export async function registerAdminRoutes(
     }
   });
 
-  app.post("/api/admin/escort-orders/:id/participants/:participantId/penalties", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+  app.post("/api/admin/escort-orders/:id/participants/:participantId/penalties", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
     const params = participantParams.safeParse(request.params);
     const body = penaltyBody.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "Укажите причину штрафа" });
@@ -322,7 +367,7 @@ export async function registerAdminRoutes(
     }
   });
 
-  app.post("/api/admin/escort-orders/:id/participants/:participantId/replacement", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+  app.post("/api/admin/escort-orders/:id/participants/:participantId/replacement", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
     const params = participantParams.safeParse(request.params);
     const body = replacementBody.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте данные нового игрока" });
@@ -347,7 +392,7 @@ export async function registerAdminRoutes(
     };
   });
 
-  app.patch("/api/admin/reviews/:id", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+  app.patch("/api/admin/reviews/:id", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
     const params = idParams.safeParse(request.params);
     const body = reviewUpdate.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте данные модерации" });
@@ -380,7 +425,7 @@ export async function registerAdminRoutes(
     return safeTicket;
   });
 
-  app.post("/api/admin/tickets/:id/messages", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+  app.post("/api/admin/tickets/:id/messages", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
     const params = idParams.safeParse(request.params);
     const body = messageBody.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте сообщение" });
@@ -391,7 +436,7 @@ export async function registerAdminRoutes(
     return reply.code(201).send(message);
   });
 
-  app.patch("/api/admin/tickets/:id/status", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+  app.patch("/api/admin/tickets/:id/status", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
     const params = idParams.safeParse(request.params);
     const body = ticketStatusBody.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте статус" });

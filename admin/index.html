@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#05090b" />
     <title>Undying Metro — Админ-панель</title>
     <link rel="icon" href="../assets/undying-metro-avatar.webp" type="image/webp" />
-    <link rel="stylesheet" href="styles.css?v=9" />
-    <script src="../config.js?v=9"></script>
+    <link rel="stylesheet" href="styles.css?v=13" />
+    <script src="../config.js?v=11"></script>
   </head>
   <body>
     <div class="admin-world" aria-hidden="true"><span></span><span></span></div>
@@ -33,13 +33,18 @@
           <img src="../assets/undying-metro-avatar.webp" alt="" />
           <span><small>СИСТЕМА UNDYING METRO</small><strong>Управление</strong></span>
         </a>
-        <div class="admin-user"><span id="adminUsername"></span><button id="logoutButton" type="button">Выйти</button></div>
+        <div class="admin-user"><span class="admin-access-badge" id="adminAccessBadge"></span><span id="adminUsername"></span><button id="logoutButton" type="button">Выйти</button></div>
       </header>
 
       <main class="admin-main">
         <section class="admin-heading">
           <div><small>ОПЕРАТИВНЫЙ ЦЕНТР</small><h1>Управление магазином</h1><p>Отзывы, поддержка и расчёты сопровождений.</p></div>
           <button class="refresh-button" id="refreshButton" type="button">↻ Обновить</button>
+        </section>
+
+        <section class="admin-access-notice" id="adminAccessNotice" data-mode="observer" role="status">
+          <strong id="adminAccessTitle">Режим наблюдения</strong>
+          <span id="adminAccessDescription">Можно просматривать все данные без внесения изменений.</span>
         </section>
 
         <section class="stat-grid" aria-label="Статистика">
@@ -53,7 +58,18 @@
           <button class="is-active" type="button" data-admin-tab="reviews">Отзывы <b id="reviewBadge">0</b></button>
           <button type="button" data-admin-tab="tickets">Поддержка <b id="ticketBadge">0</b></button>
           <button type="button" data-admin-tab="escorts">Сопроводы</button>
+          <button type="button" data-admin-tab="completed">Выполненные <b id="completedBadge">0</b></button>
         </nav>
+
+        <section class="admin-section" data-admin-section="completed" hidden>
+          <div class="section-toolbar">
+            <div><h2>Выполненные заказы</h2><p>Завершённые и уже выплаченные заказы магазина.</p></div>
+          </div>
+          <div class="completed-tabs" role="tablist" aria-label="Тип выполненного заказа">
+            <button class="is-active" type="button" role="tab" aria-selected="true">Сопровождения</button>
+          </div>
+          <div class="escort-orders" id="completedEscortOrders"></div>
+        </section>
 
         <section class="admin-section is-active" data-admin-section="reviews">
           <div class="section-toolbar">
@@ -81,7 +97,7 @@
 
         <section class="admin-section escort-section" data-admin-section="escorts" hidden>
           <div class="section-toolbar">
-            <div><h2>Новое сопровождение</h2><p>3% создателю, остаток автоматически делится между сопровождающими.</p></div>
+            <div><h2>Новое сопровождение</h2><p>3% директору компании, 10% создателю, остальные 87% автоматически делятся между сопровождающими.</p></div>
             <label><span>История</span><select id="escortFilter"><option value="">Все статусы</option><option value="planned">Запланировано</option><option value="completed">Завершено</option><option value="paid">Выплачено</option><option value="cancelled">Отменено</option></select></label>
           </div>
 
@@ -92,13 +108,26 @@
                 <small>РЕГЛАМЕНТ СОПРОВОЖДЕНИЯ</small>
                 <h3>Правила работы и штрафов</h3>
                 <ol>
-                  <li>Выполнять согласованную роль, слушать координатора и не покидать сопровождение без предупреждения.</li>
-                  <li>Не задерживать команду, не срывать заход и заранее сообщать о технических проблемах.</li>
-                  <li>Не присваивать чужой лут, не обманывать покупателя и соблюдать договорённости магазина.</li>
-                  <li>Первые три нарушения — предупреждения со штрафами 5%, 10% и 15% от гонорара.</li>
-                  <li>Четвёртое нарушение — штраф 50% от гонорара и автоматическое исключение из сопровождений.</li>
-                  <li>При замене штрафы остаются в истории, а новому игроку передаётся только оставшаяся невыплаченная доля.</li>
+                  <li>Общайся вежливо и уважительно со всеми участниками.</li>
+                  <li>Не груби и не провоцируй конфликты.</li>
+                  <li>Не используй мат, оскорбления и вульгарную лексику.</li>
+                  <li>Отвечай покупателю быстро и по существу.</li>
+                  <li>Не обманывай и не давай ложных обещаний.</li>
+                  <li>Соблюдай договорённости и сроки сопровождения.</li>
+                  <li>Держи связь с администрацией и работай командно.</li>
+                  <li>Не передавай данные от аккаунтов третьим лицам.</li>
+                  <li>Не распространяй внутреннюю информацию и переписки.</li>
+                  <li>Не навязывай дополнительные услуги без согласия покупателя.</li>
+                  <li>Соблюдай правила платформы и указания администрации.</li>
+                  <li>При возникновении проблем сообщай администрации.</li>
                 </ol>
+                <div class="discipline-penalties">
+                  <strong>Система штрафов</strong>
+                  <span>1-е нарушение — 5%, 2-е — 10%, 3-е — 15% от гонорара.</span>
+                  <span>4 нарушения за день — штраф 50% и отстранение на 24 часа.</span>
+                  <span>5 нарушений за день — игрок больше не выполняет сопровождения.</span>
+                  <small>Штрафы применяются ко всем правилам одинаково.</small>
+                </div>
                 <a class="rules-poster-link" href="../assets/rules-poster-a4.png" target="_blank" rel="noopener">Открыть правила A4 ↗</a>
               </div>
             </div>
@@ -108,18 +137,24 @@
                 <strong id="shopBankBalance">0,00 ₴</strong>
                 <span>Сюда автоматически поступают все удержанные штрафы</span>
               </div>
+              <div class="shop-bank shop-bank--director">
+                <small>БАНК ДИРЕКТОРА</small>
+                <strong id="directorBankBalance">0,00 ₴</strong>
+                <span>Отдельные 3% с каждого сопровождения</span>
+              </div>
               <div class="shop-bank shop-bank--creator">
                 <small>БАНК СОЗДАТЕЛЯ</small>
                 <strong id="creatorBankBalance">0,00 ₴</strong>
-                <span>Отдельные 3% с каждого сопровождения</span>
+                <span>Отдельные 10% с каждого сопровождения</span>
               </div>
             </div>
           </div>
 
           <form class="escort-form" id="escortForm">
             <div class="escort-fields">
-              <label><span>Что купили</span><input name="item" minlength="2" maxlength="160" placeholder="Например: сопровождение Metro Royale" required /></label>
+              <label><span>Что купили</span><input name="purchaseItem" minlength="2" maxlength="160" placeholder="Например: сопровождение Metro Royale" required /></label>
               <label><span>Покупатель</span><input name="buyerName" minlength="2" maxlength="64" required /></label>
+              <label><span>PUBG ID покупателя</span><input name="buyerGameId" inputmode="numeric" pattern="[0-9]{5,20}" minlength="5" maxlength="20" placeholder="Обязательно для отзыва" required /></label>
               <label><span>Контакт покупателя</span><input name="buyerContact" maxlength="128" placeholder="@username — необязательно" /></label>
               <label><span>Дата</span><input name="orderDate" type="date" required /></label>
               <label><span>Сумма оплаты</span><input name="amount" inputmode="decimal" placeholder="1000.00" required /></label>
@@ -133,7 +168,8 @@
 
             <div class="escort-preview" id="escortPreview">
               <span><small>Всего в гривне</small><strong id="previewTotal">0,00 ₴</strong></span>
-              <span class="escort-preview__developer"><small>Создателю 3%</small><strong id="previewCreator">0,00 ₴</strong></span>
+              <span class="escort-preview__director"><small>Директору 3%</small><strong id="previewDirector">0,00 ₴</strong></span>
+              <span class="escort-preview__developer"><small>Создателю 10%</small><strong id="previewCreator">0,00 ₴</strong></span>
               <span><small>Сопровождающим</small><strong id="previewPool">0,00 ₴</strong></span>
               <span><small>Каждому</small><strong id="previewShare">0,00 ₴</strong></span>
             </div>
@@ -148,6 +184,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=9"></script>
+    <script src="app.js?v=13"></script>
   </body>
 </html>

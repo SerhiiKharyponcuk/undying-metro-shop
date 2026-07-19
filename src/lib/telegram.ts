@@ -30,6 +30,7 @@ export class TelegramNotifier implements AdminNotifier {
       [
         "⭐ Новый отзыв",
         `Имя: ${review.name}`,
+        `PUBG ID: ${review.buyerGameId ?? "не указан"}`,
         `Оценка: ${"★".repeat(review.rating)}${"☆".repeat(5 - review.rating)}`,
         `Текст: ${review.text}`,
         `Дата: ${review.createdAt.toISOString()}`,

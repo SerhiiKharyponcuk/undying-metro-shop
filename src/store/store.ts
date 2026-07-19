@@ -24,6 +24,7 @@ export interface NewReview {
   contact: string | null;
   rating: number;
   text: string;
+  buyerGameId: string;
   contentHash: string;
   ipHash: string;
 }
@@ -40,16 +41,28 @@ export interface NewTicket {
   ipHash: string;
 }
 
+export type VerifiedReviewResult =
+  | { status: "created"; review: ReviewRecord }
+  | { status: "not_found" }
+  | { status: "already_reviewed" };
+
+export interface AdminSessionPresence {
+  activeSince: Date;
+  now: Date;
+}
+
 export interface NewEscortOrder {
   item: string;
   buyerName: string;
   buyerContact: string | null;
+  buyerGameId: string;
   originalAmountMinor: bigint;
   currency: OrderCurrency;
   exchangeRateMicros: bigint;
   rateSource: ExchangeRateSource;
   amountUahMinor: bigint;
   developerAmountMinor: bigint;
+  directorAmountMinor: bigint;
   creatorAmountMinor: bigint;
   escortPoolMinor: bigint;
   orderDate: Date;
@@ -61,7 +74,7 @@ export interface AppStore {
   getManagerAvailability(managerKeys: string[]): Promise<ManagerAvailabilityRecord[]>;
   claimManager(managerKey: string, now: Date, busyUntil: Date): Promise<ManagerClaimResult>;
 
-  createReview(input: NewReview): Promise<ReviewRecord>;
+  createVerifiedReview(input: NewReview): Promise<VerifiedReviewResult>;
   hasRecentDuplicateReview(ipHash: string, contentHash: string, since: Date): Promise<boolean>;
   listApprovedReviews(page: number, pageSize: number): Promise<Page<ReviewRecord>>;
   listReviews(status: ReviewStatus | undefined, page: number, pageSize: number): Promise<Page<ReviewRecord>>;
@@ -88,6 +101,7 @@ export interface AppStore {
     input: { name: string; contact: string | null },
   ): Promise<EscortOrderRecord | null>;
   getShopBankBalance(): Promise<bigint>;
+  getDirectorBankBalance(): Promise<bigint>;
   getCreatorBankBalance(): Promise<bigint>;
 
   findAdminByUsername(username: string): Promise<AdminRecord | null>;
@@ -97,10 +111,9 @@ export interface AppStore {
     csrfToken: string;
     adminId: string;
     expiresAt: Date;
-  }): Promise<AdminSessionRecord>;
-  findAdminSession(tokenHash: string): Promise<AdminSessionRecord | null>;
-  touchAdminSession(id: string, now: Date): Promise<void>;
-  deleteAdminSession(tokenHash: string): Promise<void>;
+  }, presence: AdminSessionPresence): Promise<AdminSessionRecord>;
+  refreshAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<AdminSessionRecord | null>;
+  deleteAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<void>;
   deleteExpiredAdminSessions(now: Date): Promise<void>;
 
   dashboardCounts(): Promise<DashboardCounts>;

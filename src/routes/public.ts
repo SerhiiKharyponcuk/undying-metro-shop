@@ -13,6 +13,7 @@ const plainText = (minimum: number, maximum: number) =>
 const reviewBody = z.object({
   name: plainText(2, 64),
   contact: z.union([plainText(3, 128), z.literal("")]).optional().default(""),
+  buyerGameId: z.string().trim().regex(/^\d{5,20}$/, "Введите корректный PUBG ID"),
   rating: z.coerce.number().int().min(1).max(5),
   text: plainText(10, 1200),
   turnstileToken: z.string().max(4096).optional().default(""),
@@ -146,20 +147,28 @@ export async function registerPublicRoutes(
       }
 
       const ipHash = hashIp(request.ip, config.ipHashSalt);
-      const contentHash = contentFingerprint([parsed.data.name, parsed.data.text], config.ipHashSalt);
+      const contentHash = contentFingerprint([parsed.data.buyerGameId, parsed.data.name, parsed.data.text], config.ipHashSalt);
       const duplicateSince = new Date(Date.now() - 12 * 60 * 60 * 1000);
       if (await store.hasRecentDuplicateReview(ipHash, contentHash, duplicateSince)) {
         return reply.code(409).send({ error: "Такой отзыв уже был отправлен" });
       }
 
-      const review = await store.createReview({
+      const result = await store.createVerifiedReview({
         name: parsed.data.name,
         contact: parsed.data.contact || null,
+        buyerGameId: parsed.data.buyerGameId,
         rating: parsed.data.rating,
         text: parsed.data.text,
         contentHash,
         ipHash,
       });
+      if (result.status === "not_found") {
+        return reply.code(403).send({ error: "PUBG ID не найден среди завершённых или оплаченных заказов" });
+      }
+      if (result.status === "already_reviewed") {
+        return reply.code(409).send({ error: "Для покупок с этим PUBG ID отзыв уже оставлен" });
+      }
+      const { review } = result;
       await notifier.review(review);
       return reply.code(201).send({ id: review.id, status: "pending", message: "Отзыв отправлен на модерацию" });
     },
