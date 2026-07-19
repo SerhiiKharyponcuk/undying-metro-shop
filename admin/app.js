@@ -264,7 +264,7 @@
         contact: row.querySelector('[name="escortContact"]').value,
       }));
       const payload = {
-        item: escortForm.elements.item.value,
+        item: escortForm.elements.purchaseItem.value,
         buyerName: escortForm.elements.buyerName.value,
         buyerContact: escortForm.elements.buyerContact.value,
         amount: escortForm.elements.amount.value,
