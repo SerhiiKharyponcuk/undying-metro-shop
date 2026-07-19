@@ -40,6 +40,11 @@ export interface NewTicket {
   ipHash: string;
 }
 
+export interface AdminSessionPresence {
+  activeSince: Date;
+  now: Date;
+}
+
 export interface NewEscortOrder {
   item: string;
   buyerName: string;
@@ -50,6 +55,7 @@ export interface NewEscortOrder {
   rateSource: ExchangeRateSource;
   amountUahMinor: bigint;
   developerAmountMinor: bigint;
+  directorAmountMinor: bigint;
   creatorAmountMinor: bigint;
   escortPoolMinor: bigint;
   orderDate: Date;
@@ -88,6 +94,7 @@ export interface AppStore {
     input: { name: string; contact: string | null },
   ): Promise<EscortOrderRecord | null>;
   getShopBankBalance(): Promise<bigint>;
+  getDirectorBankBalance(): Promise<bigint>;
   getCreatorBankBalance(): Promise<bigint>;
 
   findAdminByUsername(username: string): Promise<AdminRecord | null>;
@@ -97,10 +104,9 @@ export interface AppStore {
     csrfToken: string;
     adminId: string;
     expiresAt: Date;
-  }): Promise<AdminSessionRecord>;
-  findAdminSession(tokenHash: string): Promise<AdminSessionRecord | null>;
-  touchAdminSession(id: string, now: Date): Promise<void>;
-  deleteAdminSession(tokenHash: string): Promise<void>;
+  }, presence: AdminSessionPresence): Promise<AdminSessionRecord>;
+  refreshAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<AdminSessionRecord | null>;
+  deleteAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<void>;
   deleteExpiredAdminSessions(now: Date): Promise<void>;
 
   dashboardCounts(): Promise<DashboardCounts>;

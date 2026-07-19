@@ -13,6 +13,7 @@ export type NotificationState = "sent" | "failed" | "skipped";
 export type OrderCurrency = "UAH" | "EUR" | "USD";
 export type EscortOrderStatus = "planned" | "completed" | "paid" | "cancelled";
 export type ExchangeRateSource = "uah" | "nbu" | "manual";
+export type AdminAccessMode = "operator" | "observer";
 
 export interface AdminRecord {
   id: string;
@@ -27,7 +28,10 @@ export interface AdminSessionRecord {
   tokenHash: string;
   csrfToken: string;
   adminId: string;
+  accessMode: AdminAccessMode;
   expiresAt: Date;
+  createdAt: Date;
+  lastSeenAt: Date;
   admin: AdminRecord;
 }
 
@@ -133,6 +137,7 @@ export interface EscortOrderRecord {
   rateSource: ExchangeRateSource;
   amountUahMinor: bigint;
   developerAmountMinor: bigint;
+  directorAmountMinor: bigint;
   creatorAmountMinor: bigint;
   escortPoolMinor: bigint;
   orderDate: Date;

@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#05090b" />
     <title>Undying Metro — Админ-панель</title>
     <link rel="icon" href="../assets/undying-metro-avatar.webp" type="image/webp" />
-    <link rel="stylesheet" href="styles.css?v=9" />
-    <script src="../config.js?v=9"></script>
+    <link rel="stylesheet" href="styles.css?v=12" />
+    <script src="../config.js?v=11"></script>
   </head>
   <body>
     <div class="admin-world" aria-hidden="true"><span></span><span></span></div>
@@ -33,13 +33,18 @@
           <img src="../assets/undying-metro-avatar.webp" alt="" />
           <span><small>СИСТЕМА UNDYING METRO</small><strong>Управление</strong></span>
         </a>
-        <div class="admin-user"><span id="adminUsername"></span><button id="logoutButton" type="button">Выйти</button></div>
+        <div class="admin-user"><span class="admin-access-badge" id="adminAccessBadge"></span><span id="adminUsername"></span><button id="logoutButton" type="button">Выйти</button></div>
       </header>
 
       <main class="admin-main">
         <section class="admin-heading">
           <div><small>ОПЕРАТИВНЫЙ ЦЕНТР</small><h1>Управление магазином</h1><p>Отзывы, поддержка и расчёты сопровождений.</p></div>
           <button class="refresh-button" id="refreshButton" type="button">↻ Обновить</button>
+        </section>
+
+        <section class="admin-access-notice" id="adminAccessNotice" data-mode="observer" role="status">
+          <strong id="adminAccessTitle">Режим наблюдения</strong>
+          <span id="adminAccessDescription">Можно просматривать все данные без внесения изменений.</span>
         </section>
 
         <section class="stat-grid" aria-label="Статистика">
@@ -81,7 +86,7 @@
 
         <section class="admin-section escort-section" data-admin-section="escorts" hidden>
           <div class="section-toolbar">
-            <div><h2>Новое сопровождение</h2><p>3% создателю, остаток автоматически делится между сопровождающими.</p></div>
+            <div><h2>Новое сопровождение</h2><p>3% директору компании, 10% создателю, остальные 87% автоматически делятся между сопровождающими.</p></div>
             <label><span>История</span><select id="escortFilter"><option value="">Все статусы</option><option value="planned">Запланировано</option><option value="completed">Завершено</option><option value="paid">Выплачено</option><option value="cancelled">Отменено</option></select></label>
           </div>
 
@@ -108,10 +113,15 @@
                 <strong id="shopBankBalance">0,00 ₴</strong>
                 <span>Сюда автоматически поступают все удержанные штрафы</span>
               </div>
+              <div class="shop-bank shop-bank--director">
+                <small>БАНК ДИРЕКТОРА</small>
+                <strong id="directorBankBalance">0,00 ₴</strong>
+                <span>Отдельные 3% с каждого сопровождения</span>
+              </div>
               <div class="shop-bank shop-bank--creator">
                 <small>БАНК СОЗДАТЕЛЯ</small>
                 <strong id="creatorBankBalance">0,00 ₴</strong>
-                <span>Отдельные 3% с каждого сопровождения</span>
+                <span>Отдельные 10% с каждого сопровождения</span>
               </div>
             </div>
           </div>
@@ -133,7 +143,8 @@
 
             <div class="escort-preview" id="escortPreview">
               <span><small>Всего в гривне</small><strong id="previewTotal">0,00 ₴</strong></span>
-              <span class="escort-preview__developer"><small>Создателю 3%</small><strong id="previewCreator">0,00 ₴</strong></span>
+              <span class="escort-preview__director"><small>Директору 3%</small><strong id="previewDirector">0,00 ₴</strong></span>
+              <span class="escort-preview__developer"><small>Создателю 10%</small><strong id="previewCreator">0,00 ₴</strong></span>
               <span><small>Сопровождающим</small><strong id="previewPool">0,00 ₴</strong></span>
               <span><small>Каждому</small><strong id="previewShare">0,00 ₴</strong></span>
             </div>
@@ -148,6 +159,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=10"></script>
+    <script src="app.js?v=12"></script>
   </body>
 </html>

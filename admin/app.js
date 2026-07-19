@@ -9,6 +9,8 @@
   const globalStatus = document.querySelector("#globalStatus");
   let csrfToken = sessionStorage.getItem("undying_admin_csrf") || "";
   let activeTicketId = null;
+  let accessMode = "observer";
+  let heartbeatRunning = false;
   const ticketStatuses = {
     open: "Новое",
     in_progress: "В работе",
@@ -52,6 +54,8 @@
     if (!response.ok) {
       const error = new Error(data.error || "Ошибка запроса");
       error.status = response.status;
+      error.code = data.code || "";
+      if (error.code === "ADMIN_READ_ONLY") applyAccessMode("observer");
       throw error;
     }
     return data;
@@ -74,9 +78,40 @@
     return box;
   }
 
+  function canWrite() {
+    return accessMode === "operator";
+  }
+
+  function applyAccessMode(mode) {
+    const nextMode = mode === "observer" ? "observer" : "operator";
+    const changed = nextMode !== accessMode;
+    accessMode = nextMode;
+    adminApp.dataset.accessMode = accessMode;
+    const observer = !canWrite();
+    document.querySelector("#adminAccessBadge").textContent = observer ? "Наблюдатель" : "Управление";
+    document.querySelector("#adminAccessTitle").textContent = observer ? "Режим наблюдения" : "Режим управления";
+    document.querySelector("#adminAccessDescription").textContent = observer
+      ? "Другой администратор управляет панелью. Вы можете следить за всеми данными; доступ к изменениям перейдёт автоматически."
+      : "Вы первый активный администратор и можете вносить изменения. Остальные администраторы подключаются как наблюдатели.";
+    document.querySelector("#adminAccessNotice").dataset.mode = accessMode;
+    escortForm.inert = observer;
+    document.querySelectorAll("[data-write-control]").forEach((control) => {
+      control.disabled = observer || control.dataset.writeBlocked === "true";
+    });
+    return changed;
+  }
+
+  function writeControl(control, blocked = false) {
+    control.dataset.writeControl = "true";
+    control.dataset.writeBlocked = String(Boolean(blocked));
+    control.disabled = !canWrite() || blocked;
+    return control;
+  }
+
   function showLogin(message = "") {
     loginView.hidden = false;
     adminApp.hidden = true;
+    applyAccessMode("observer");
     document.querySelector("#loginStatus").textContent = message;
   }
 
@@ -86,6 +121,7 @@
     csrfToken = dashboard.csrfToken;
     sessionStorage.setItem("undying_admin_csrf", csrfToken);
     document.querySelector("#adminUsername").textContent = dashboard.admin.username;
+    applyAccessMode(dashboard.accessMode === "observer" || dashboard.canWrite === false ? "observer" : "operator");
     renderCounts(dashboard.counts);
   }
 
@@ -200,10 +236,12 @@
     const amount = Number(String(escortForm.elements.amount.value || "0").replace(",", "."));
     const rate = Number(String(escortForm.elements.exchangeRate.value || "0").replace(",", "."));
     const total = Number.isFinite(amount * rate) ? Math.round(amount * rate * 100) / 100 : 0;
-    const creator = Math.round(total * 3) / 100;
-    const pool = Math.round((total - creator) * 100) / 100;
+    const director = Math.round(total * 3) / 100;
+    const creator = Math.round(total * 10) / 100;
+    const pool = Math.round((total - director - creator) * 100) / 100;
     const share = escortPeople.children.length ? Math.floor((pool / escortPeople.children.length) * 100) / 100 : 0;
     document.querySelector("#previewTotal").textContent = money(total);
+    document.querySelector("#previewDirector").textContent = money(director);
     document.querySelector("#previewCreator").textContent = money(creator);
     document.querySelector("#previewPool").textContent = money(pool);
     document.querySelector("#previewShare").textContent = money(share);
@@ -303,6 +341,7 @@
     meta.textContent = `${order.buyerName}${order.buyerContact ? ` • ${order.buyerContact}` : ""} • ${new Date(order.orderDate).toLocaleDateString("ru-RU")}`;
     heading.append(title, meta);
     const statusSelect = document.createElement("select");
+    writeControl(statusSelect);
     Object.entries(escortStatuses).forEach(([value, label]) => {
       const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = order.status === value; statusSelect.append(option);
     });
@@ -316,7 +355,8 @@
     [
       ["Оплачено", `${order.originalAmount} ${order.currency}`],
       ["В гривне", money(order.amountUah)],
-      ["Создателю 3%", money(order.creatorAmountUah)],
+      ["Директору 3%", money(order.directorAmountUah)],
+      ["Создателю 10%", money(order.creatorAmountUah)],
       ["Игрокам", money(order.escortPoolUah)],
       ["Штрафы в банк", money(order.bankFromPenaltiesUah)],
     ].forEach(([label, value]) => {
@@ -334,13 +374,13 @@
       note.textContent = `${player.contact || "Без контакта"}${player.replacedAt ? " • Заменён" : ""}${player.excludedAt && !player.replacedAt ? " • Исключён после 4 нарушения" : ""}${player.replacementForId ? " • Вышел на замену" : ""}`;
       person.append(name, note);
       const label = document.createElement("label");
-      const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = player.paid; checkbox.disabled = Boolean(player.replacedAt);
+      const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = player.paid; writeControl(checkbox, Boolean(player.replacedAt));
       const paymentText = document.createElement("span"); paymentText.textContent = player.replacedAt ? "Доля передана" : (player.paid ? "Выплачено" : "Отметить выплату");
       label.append(checkbox, paymentText);
       checkbox.addEventListener("change", async () => {
         checkbox.disabled = true;
         try { await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}`, { method: "PATCH", body: JSON.stringify({ paid: checkbox.checked }) }); await loadEscortOrders(); }
-        catch (error) { checkbox.checked = !checkbox.checked; checkbox.disabled = false; globalStatus.textContent = error.message; }
+        catch (error) { checkbox.checked = !checkbox.checked; checkbox.disabled = !canWrite() || Boolean(player.replacedAt); globalStatus.textContent = error.message; }
       });
       top.append(person, label);
 
@@ -357,7 +397,7 @@
       });
 
       row.append(top, figures, penalties);
-      if (!player.replacedAt && !player.paid) {
+      if (canWrite() && !player.replacedAt && !player.paid) {
         const details = document.createElement("details"); details.className = "escort-actions";
         const summary = document.createElement("summary"); summary.textContent = player.excludedAt ? "Игрок исключён — назначить замену" : "Штраф или замена игрока";
         const actions = document.createElement("div"); actions.className = "escort-action-grid";
@@ -409,6 +449,7 @@
       ]);
       container.replaceChildren();
       document.querySelector("#shopBankBalance").textContent = money(bank.penaltyBalanceUah);
+      document.querySelector("#directorBankBalance").textContent = money(bank.directorBalanceUah);
       document.querySelector("#creatorBankBalance").textContent = money(bank.creatorBalanceUah);
       document.querySelector("#escortHistoryTotal").textContent = `Записей: ${result.total}`;
       if (!result.items.length) container.append(empty("Сопровождений пока нет", "Создайте первый расчёт выше."));
@@ -443,14 +484,17 @@
     const actions = document.createElement("div");
     actions.className = "review-actions";
     const reply = document.createElement("textarea");
+    writeControl(reply);
     reply.maxLength = 1200;
     reply.placeholder = "Официальный ответ магазина";
     reply.value = review.adminReply || "";
     const buttons = document.createElement("div");
     const approve = document.createElement("button");
+    writeControl(approve);
     approve.type = "button";
     approve.textContent = "Опубликовать";
     const reject = document.createElement("button");
+    writeControl(reject);
     reject.type = "button";
     reject.dataset.action = "reject";
     reject.textContent = "Отклонить";
@@ -546,6 +590,7 @@
     subject.textContent = ticket.subject;
     title.append(h3, subject);
     const select = document.createElement("select");
+    writeControl(select);
     [["open","Новое"],["in_progress","В работе"],["waiting_user","Ожидает пользователя"],["closed","Закрыто"]].forEach(([value,label]) => {
       const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = ticket.status === value; select.append(option);
     });
@@ -569,10 +614,10 @@
     });
     const form = document.createElement("form");
     form.className = "detail-reply";
-    const textarea = document.createElement("textarea"); textarea.maxLength=3000; textarea.minLength=2; textarea.required=true; textarea.placeholder="Ответ пользователю";
-    const button = document.createElement("button"); button.className="ticket-action"; button.type="submit"; button.textContent="Отправить ответ";
+    const textarea = document.createElement("textarea"); textarea.maxLength=3000; textarea.minLength=2; textarea.required=true; textarea.placeholder="Ответ пользователю"; writeControl(textarea);
+    const button = document.createElement("button"); button.className="ticket-action"; button.type="submit"; button.textContent="Отправить ответ"; writeControl(button);
     form.append(textarea,button);
-    form.hidden = ticket.status === "closed";
+    form.hidden = ticket.status === "closed" || !canWrite();
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       try { await api(`/api/admin/tickets/${ticket.id}/messages`, { method:"POST", body:JSON.stringify({message:textarea.value}) }); await loadTicketDetail(ticket.id); await refreshDashboard(); }
@@ -585,13 +630,30 @@
     const dashboard = await api("/api/admin/dashboard", { method: "GET" });
     csrfToken = dashboard.csrfToken;
     sessionStorage.setItem("undying_admin_csrf", csrfToken);
+    const changed = applyAccessMode(dashboard.accessMode === "observer" || dashboard.canWrite === false ? "observer" : "operator");
     renderCounts(dashboard.counts);
+    return changed;
   }
 
   async function refreshAll() {
     globalStatus.textContent = "";
-    await Promise.all([refreshDashboard(), loadReviews(), loadTickets(), loadEscortOrders()]);
+    await refreshDashboard();
+    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders()]);
     if (activeTicketId) await loadTicketDetail(activeTicketId);
+  }
+
+  async function refreshActiveSection() {
+    const activeTab = document.querySelector("[data-admin-tab].is-active")?.dataset.adminTab;
+    if (activeTab === "tickets") {
+      await loadTickets();
+      if (activeTicketId) await loadTicketDetail(activeTicketId);
+      return;
+    }
+    if (activeTab === "escorts") {
+      await loadEscortOrders();
+      return;
+    }
+    await loadReviews();
   }
 
   async function applyDeepLink() {
@@ -615,5 +677,26 @@
   }
 
   document.querySelector("#refreshButton").addEventListener("click", () => void refreshAll());
+  window.setInterval(async () => {
+    if (adminApp.hidden || heartbeatRunning) return;
+    heartbeatRunning = true;
+    try {
+      const changed = await refreshDashboard();
+      if (changed) {
+        globalStatus.textContent = canWrite()
+          ? "Управление панелью автоматически передано вам"
+          : "Панель переключена в режим наблюдения";
+      }
+      await refreshActiveSection();
+    } catch (error) {
+      if (error.status === 401) {
+        csrfToken = "";
+        sessionStorage.removeItem("undying_admin_csrf");
+        showLogin("Сессия истекла");
+      }
+    } finally {
+      heartbeatRunning = false;
+    }
+  }, 20_000);
   void bootstrap().then(() => adminApp.hidden ? undefined : applyDeepLink());
 })();

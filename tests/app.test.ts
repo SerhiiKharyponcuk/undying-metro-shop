@@ -77,7 +77,7 @@ describe("Undying Metro API", () => {
     expect(response.statusCode).toBe(200);
     const body = response.json();
     const cookie = String(response.headers["set-cookie"]).split(";")[0];
-    return { cookie, csrf: body.csrfToken };
+    return { cookie, csrf: body.csrfToken, accessMode: body.accessMode as "operator" | "observer" };
   }
 
   it("показывает дружелюбный статус на корневом адресе API", async () => {
@@ -149,6 +149,67 @@ describe("Undying Metro API", () => {
     expect(limited.statusCode).toBe(429);
   });
 
+  it("пускает второго администратора в режим наблюдения и передаёт ему управление после выхода первого", async () => {
+    const first = await login();
+    const second = await login();
+    expect(first.accessMode).toBe("operator");
+    expect(second.accessMode).toBe("observer");
+
+    const observerDashboard = await app.inject({ method: "GET", url: "/api/admin/dashboard", headers: { cookie: second.cookie } });
+    expect(observerDashboard.statusCode).toBe(200);
+    expect(observerDashboard.json()).toMatchObject({ accessMode: "observer", canWrite: false });
+    const observerReads = await Promise.all([
+      "/api/admin/reviews?status=&page=1&pageSize=50",
+      "/api/admin/tickets?status=&query=&page=1&pageSize=50",
+      "/api/admin/escort-orders?status=&page=1&pageSize=50",
+      "/api/admin/shop-bank",
+    ].map((url) => app.inject({ method: "GET", url, headers: { cookie: second.cookie } })));
+    expect(observerReads.every((response) => response.statusCode === 200)).toBe(true);
+
+    const review = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload() });
+    const denied = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/reviews/${review.json().id}`,
+      headers: { cookie: second.cookie, "x-csrf-token": second.csrf },
+      payload: { status: "approved", adminReply: "Ответ наблюдателя" },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({ code: "ADMIN_READ_ONLY" });
+    expect(store.reviews[0]?.status).toBe("pending");
+
+    const logout = await app.inject({
+      method: "POST",
+      url: "/api/admin/logout",
+      headers: { cookie: first.cookie, "x-csrf-token": first.csrf },
+      payload: {},
+    });
+    expect(logout.statusCode).toBe(200);
+
+    const promotedDashboard = await app.inject({ method: "GET", url: "/api/admin/dashboard", headers: { cookie: second.cookie } });
+    expect(promotedDashboard.json()).toMatchObject({ accessMode: "operator", canWrite: true });
+    const allowed = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/reviews/${review.json().id}`,
+      headers: { cookie: second.cookie, "x-csrf-token": second.csrf },
+      payload: { status: "approved", adminReply: "Ответ оператора" },
+    });
+    expect(allowed.statusCode).toBe(200);
+  });
+
+  it("передаёт управление активному наблюдателю, когда оператор перестаёт отправлять heartbeat", async () => {
+    const first = await login();
+    const second = await login();
+    const operator = store.sessions.find((item) => item.accessMode === "operator");
+    expect(operator).toBeTruthy();
+    operator!.lastSeenAt = new Date(Date.now() - 61_000);
+
+    const promoted = await app.inject({ method: "GET", url: "/api/admin/dashboard", headers: { cookie: second.cookie } });
+    expect(promoted.json()).toMatchObject({ accessMode: "operator", canWrite: true });
+    const returned = await app.inject({ method: "GET", url: "/api/admin/dashboard", headers: { cookie: first.cookie } });
+    expect(returned.json()).toMatchObject({ accessMode: "observer", canWrite: false });
+    expect(store.sessions.filter((item) => item.accessMode === "operator")).toHaveLength(1);
+  });
+
   it("позволяет администратору опубликовать отзыв и добавить ответ", async () => {
     const created = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload() });
     const { cookie, csrf } = await login();
@@ -194,10 +255,43 @@ describe("Undying Metro API", () => {
     expect(response.statusCode).toBe(201);
     expect(response.json()).toMatchObject({
       amountUah: "1000.00",
-      creatorAmountUah: "30.00",
-      escortPoolUah: "970.00",
+      directorAmountUah: "30.00",
+      creatorAmountUah: "100.00",
+      escortPoolUah: "870.00",
     });
-    expect(response.json().participants.map((item: any) => item.shareUah)).toEqual(["323.34", "323.33", "323.33"]);
+    expect(response.json().participants.map((item: any) => item.shareUah)).toEqual(["290.00", "290.00", "290.00"]);
+  });
+
+  it("исключает отменённое сопровождение из банков директора и создателя", async () => {
+    const { cookie, csrf } = await login();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/escort-orders",
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: {
+        item: "Сопровождение",
+        buyerName: "Покупатель",
+        amount: "1000",
+        currency: "UAH",
+        orderDate: "2026-07-19",
+        escorts: [{ name: "Игрок" }],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+
+    const activeBank = await app.inject({ method: "GET", url: "/api/admin/shop-bank", headers: { cookie } });
+    expect(activeBank.json()).toMatchObject({ directorBalanceUah: "30.00", creatorBalanceUah: "100.00" });
+
+    const cancelled = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/escort-orders/${created.json().id}/status`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { status: "cancelled" },
+    });
+    expect(cancelled.statusCode).toBe(200);
+
+    const cancelledBank = await app.inject({ method: "GET", url: "/api/admin/shop-bank", headers: { cookie } });
+    expect(cancelledBank.json()).toMatchObject({ directorBalanceUah: "0.00", creatorBalanceUah: "0.00" });
   });
 
   it("защищает расчёты сопровождений и ограничивает число игроков", async () => {
@@ -271,12 +365,12 @@ describe("Undying Metro API", () => {
     }
     const player = lastResponse!.json().participants[0];
     expect(player.penalties.map((penalty: any) => penalty.percentage)).toEqual([5, 10, 15, 50]);
-    expect(player.penaltyTotalUah).toBe("776.00");
-    expect(player.payoutUah).toBe("194.00");
+    expect(player.penaltyTotalUah).toBe("696.00");
+    expect(player.payoutUah).toBe("174.00");
     expect(player).toMatchObject({ active: false, nextPenaltyPercent: null });
     expect(player.excludedAt).toBeTruthy();
     const bank = await app.inject({ method: "GET", url: "/api/admin/shop-bank", headers: { cookie } });
-    expect(bank.json()).toMatchObject({ penaltyBalanceUah: "776.00", creatorBalanceUah: "30.00" });
+    expect(bank.json()).toMatchObject({ penaltyBalanceUah: "696.00", directorBalanceUah: "30.00", creatorBalanceUah: "100.00" });
     const fifth = await app.inject({
       method: "POST",
       url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}/penalties`,
@@ -310,9 +404,9 @@ describe("Undying Metro API", () => {
     expect(replaced.statusCode).toBe(200);
     const [oldPlayer, newPlayer] = replaced.json().participants;
     expect(oldPlayer).toMatchObject({ active: false, payoutUah: "0.00" });
-    expect(newPlayer).toMatchObject({ active: true, shareUah: "921.50", payoutUah: "921.50", nextPenaltyPercent: 5 });
+    expect(newPlayer).toMatchObject({ active: true, shareUah: "826.50", payoutUah: "826.50", nextPenaltyPercent: 5 });
     expect(newPlayer.replacementForId).toBe(oldPlayer.id);
-    expect(replaced.json().bankFromPenaltiesUah).toBe("48.50");
+    expect(replaced.json().bankFromPenaltiesUah).toBe("43.50");
   });
 
   it("создаёт заявку и разрешает доступ только с секретным токеном", async () => {

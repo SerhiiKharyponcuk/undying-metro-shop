@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AppStore, NewEscortOrder, NewReview, NewTicket } from "../src/store/store.js";
+import type { AdminSessionPresence, AppStore, NewEscortOrder, NewReview, NewTicket } from "../src/store/store.js";
 import type {
   AdminRecord,
   AdminSessionRecord,
@@ -269,6 +269,10 @@ export class MemoryStore implements AppStore {
     return this.escortOrders.filter((order) => order.status !== "cancelled").reduce((sum, order) => sum + order.creatorAmountMinor, 0n);
   }
 
+  async getDirectorBankBalance(): Promise<bigint> {
+    return this.escortOrders.filter((order) => order.status !== "cancelled").reduce((sum, order) => sum + order.directorAmountMinor, 0n);
+  }
+
   async findAdminByUsername(username: string): Promise<AdminRecord | null> {
     return this.admins.find((item) => item.username === username) ?? null;
   }
@@ -279,21 +283,56 @@ export class MemoryStore implements AppStore {
     return value;
   }
 
-  async createAdminSession(input: { tokenHash: string; csrfToken: string; adminId: string; expiresAt: Date }): Promise<AdminSessionRecord> {
+  private reconcileAdminAccess(presence: AdminSessionPresence): void {
+    for (const session of this.sessions) {
+      if (
+        session.accessMode === "operator"
+        && (session.expiresAt <= presence.now || session.lastSeenAt < presence.activeSince || !session.admin.active)
+      ) {
+        session.accessMode = "observer";
+      }
+    }
+    if (this.sessions.some((item) => item.accessMode === "operator")) return;
+    const candidate = this.sessions
+      .filter((item) => item.expiresAt > presence.now && item.lastSeenAt >= presence.activeSince && item.admin.active)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id))[0];
+    if (candidate) candidate.accessMode = "operator";
+  }
+
+  async createAdminSession(
+    input: { tokenHash: string; csrfToken: string; adminId: string; expiresAt: Date },
+    presence: AdminSessionPresence,
+  ): Promise<AdminSessionRecord> {
+    this.sessions = this.sessions.filter((item) => item.expiresAt > presence.now);
+    this.reconcileAdminAccess(presence);
     const admin = this.admins.find((item) => item.id === input.adminId)!;
-    const value: AdminSessionRecord = { id: randomUUID(), ...input, admin };
+    const value: AdminSessionRecord = {
+      id: randomUUID(),
+      ...input,
+      accessMode: this.sessions.some((item) => item.accessMode === "operator") ? "observer" : "operator",
+      createdAt: presence.now,
+      lastSeenAt: presence.now,
+      admin,
+    };
     this.sessions.push(value);
     return value;
   }
 
-  async findAdminSession(tokenHash: string): Promise<AdminSessionRecord | null> {
-    return this.sessions.find((item) => item.tokenHash === tokenHash) ?? null;
+  async refreshAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<AdminSessionRecord | null> {
+    const session = this.sessions.find((item) => item.tokenHash === tokenHash);
+    if (!session || !session.admin.active || session.expiresAt <= presence.now) {
+      if (session) this.sessions = this.sessions.filter((item) => item.id !== session.id);
+      this.reconcileAdminAccess(presence);
+      return null;
+    }
+    session.lastSeenAt = presence.now;
+    this.reconcileAdminAccess(presence);
+    return session;
   }
 
-  async touchAdminSession(): Promise<void> {}
-
-  async deleteAdminSession(tokenHash: string): Promise<void> {
+  async deleteAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<void> {
     this.sessions = this.sessions.filter((item) => item.tokenHash !== tokenHash);
+    this.reconcileAdminAccess(presence);
   }
 
   async deleteExpiredAdminSessions(now: Date): Promise<void> {
