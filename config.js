@@ -1,20 +1,22 @@
-// После размещения backend на Render укажите его адрес без завершающего слеша.
 window.UNDYING_CONFIG = Object.freeze({
-  API_BASE_URL: "",
-  TURNSTILE_SITE_KEY: "",
+  API_BASE_URL: "https://undying-metro-api.onrender.com",
+  TURNSTILE_SITE_KEY: "0x4AAAAAAD5FZqPoLDdJ-4fd",
+  SHOP_TELEGRAM_URL: "https://t.me/UNDYINGmetroSHOP",
+  DONATE_URL: "",
+  DEVELOPER_GITHUB: "https://github.com/SerhiiKharyponcuk",
   MANAGERS: [
     {
       key: "manager_1",
-      name: "Менеджер №1",
+      name: "АРТЕМ",
       specialty: "Покупки, товары и наличие",
-      telegramUrl: "",
+      telegramUrl: "@Akulenok_pik",
       avatar: "assets/manager-01.webp",
     },
     {
       key: "manager_2",
-      name: "Менеджер №2",
+      name: "КОСТЯ",
       specialty: "Оплата, заказы и помощь",
-      telegramUrl: "",
+      telegramUrl: "@Qieush9",
       avatar: "assets/manager-02.webp",
     },
   ],

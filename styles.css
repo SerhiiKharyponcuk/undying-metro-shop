@@ -2508,3 +2508,266 @@ body.modal-open {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Compact manager selector and creator signature */
+.managers-panel {
+  width: min(calc(100% - 24px), 570px);
+  max-height: 85vh;
+  max-height: 85svh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.managers-panel__body {
+  padding: 16px;
+}
+
+.managers-intro {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+}
+
+.manager-grid {
+  grid-template-columns: 1fr;
+  gap: 9px;
+}
+
+@media (min-width: 561px) {
+  .manager-card {
+    display: grid;
+    grid-template-columns: 94px minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    min-height: 114px;
+    padding: 9px;
+    border-radius: 16px;
+  }
+}
+
+.manager-card__visual {
+  width: 94px;
+  height: 94px;
+  aspect-ratio: 1;
+  border-radius: 13px;
+}
+
+.manager-card__visual::after {
+  height: 45%;
+}
+
+.manager-card__content {
+  min-width: 0;
+  padding: 0;
+}
+
+.manager-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.manager-card__top > small {
+  color: #8873aa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+}
+
+.manager-card__status {
+  position: static;
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  font-size: 7px;
+}
+
+.manager-card__content h3 {
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+.manager-card__content p {
+  min-height: 0;
+  margin: 3px 0 8px;
+  font-size: 9px;
+}
+
+.manager-card__actions {
+  display: grid;
+  gap: 5px;
+}
+
+.manager-contact {
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 9px;
+}
+
+.manager-contact svg {
+  width: 16px;
+  height: 16px;
+}
+
+.manager-fallback {
+  min-height: 31px;
+  padding: 6px 9px;
+  border: 1px solid rgba(48, 174, 232, 0.2);
+  border-radius: 9px;
+  color: #92d9f8;
+  background: rgba(48, 174, 232, 0.055);
+  font: inherit;
+  font-size: 8px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.manager-fallback:hover,
+.manager-fallback:focus-visible {
+  outline: none;
+  border-color: rgba(48, 174, 232, 0.42);
+  background: rgba(48, 174, 232, 0.1);
+}
+
+.manager-fallback[hidden] {
+  display: none;
+}
+
+.manager-card[data-status="unavailable"] {
+  border-color: rgba(255, 179, 72, 0.18);
+}
+
+.manager-card[data-status="unavailable"] .manager-card__status {
+  color: #ffd19a;
+  border-color: rgba(255, 179, 72, 0.24);
+}
+
+.manager-card[data-status="unavailable"] .manager-card__status i {
+  background: var(--amber);
+  box-shadow: 0 0 8px rgba(255, 179, 72, 0.75);
+}
+
+.managers-message {
+  margin-top: 9px;
+}
+
+.managers-legend {
+  margin-top: 10px;
+  padding-top: 9px;
+}
+
+.creator-credit,
+.creator-credit:hover,
+.creator-credit:focus,
+.creator-credit:visited {
+  color: #dce8e6;
+  text-decoration: none !important;
+}
+
+.creator-credit {
+  grid-template-columns: 34px minmax(0, 1fr) 18px;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-radius: 13px;
+}
+
+.creator-credit__mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  font-size: 9px;
+}
+
+.creator-credit__copy strong {
+  font-size: 10px;
+}
+
+.creator-credit__copy > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@media (max-width: 560px) {
+  .managers-modal {
+    place-items: center;
+    padding: 10px;
+  }
+
+  .managers-panel {
+    width: calc(100% - 20px);
+    max-height: 85svh;
+    border: 1px solid rgba(85, 244, 225, 0.16);
+    border-radius: 20px;
+  }
+
+  .managers-panel .community-panel__header {
+    padding: 11px 12px;
+  }
+
+  .managers-panel__body {
+    padding: 12px;
+  }
+
+  .managers-intro {
+    padding: 9px 10px;
+  }
+
+  .manager-card {
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 9px;
+    min-height: 100px;
+    padding: 8px;
+  }
+
+  .manager-card__visual {
+    width: 76px;
+    height: 76px;
+    align-self: start;
+  }
+
+  .manager-card__content {
+    display: block;
+    padding: 0;
+  }
+
+  .manager-card__content h3 {
+    font-size: 14px;
+  }
+
+  .manager-card__content p {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .manager-contact {
+    min-height: 34px;
+    font-size: 8.5px;
+  }
+
+  .managers-legend small {
+    display: none;
+  }
+}
+
+@media (max-width: 360px) {
+  .managers-modal {
+    padding: 6px;
+  }
+
+  .managers-panel {
+    width: calc(100% - 12px);
+  }
+
+  .managers-intro small {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+}

@@ -12,8 +12,8 @@
     <link rel="icon" href="assets/undying-metro-avatar.webp" type="image/webp" />
     <link rel="preload" href="assets/undying-metro-avatar.webp" as="image" />
     <script>document.documentElement.classList.add("js");</script>
-    <script src="config.js"></script>
-    <link rel="stylesheet" href="styles.css" />
+    <script src="config.js?v=4"></script>
+    <link rel="stylesheet" href="styles.css?v=4" />
   </head>
 
   <body>
@@ -168,7 +168,7 @@
           <span class="socials__line"></span>
         </div>
 
-        <a class="creator-credit" href="https://github.com/SerhiiKharyponcuk" data-link="developer" data-transition-label="SERHII // VOIDFORGE">
+        <a class="creator-credit" href="#developer" data-link="developer" data-transition-label="SERHII // VOIDFORGE">
           <span class="creator-credit__mark" aria-hidden="true">VF</span>
           <span class="creator-credit__copy">
             <small>АВТОР И FULL-STACK РАЗРАБОТЧИК</small>
@@ -333,16 +333,15 @@
               <div class="manager-card__visual">
                 <img src="assets/manager-01.webp" alt="Аватар первого менеджера" data-manager-avatar />
                 <span class="manager-card__scan" aria-hidden="true"></span>
-                <span class="manager-card__status" data-manager-status><i></i><b>Проверяем</b></span>
               </div>
               <div class="manager-card__content">
-                <small>ОПЕРАТОР 01</small>
+                <div class="manager-card__top"><small>ОПЕРАТОР 01</small><span class="manager-card__status" data-manager-status><i></i><b>Проверяем</b></span></div>
                 <h3 data-manager-name>Менеджер №1</h3>
                 <p data-manager-specialty>Покупки, товары и наличие</p>
-                <button class="manager-contact" type="button" data-manager-contact>
-                  <span data-manager-action>Проверяем статус…</span>
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 2.4 2.85 8.85c-1.18.46-1.12 1.15-.2 1.43l4.42 1.38 1.7 5.33 2.85-2.55 4.41 3.26c.81.45 1.39.22 1.6-.75l2.95-13.9c.3-1.2-.47-1.75-1.2-1.45Z" /></svg>
-                </button>
+                <div class="manager-card__actions">
+                  <button class="manager-contact" type="button" data-manager-contact><span data-manager-action>Проверяем статус…</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 2.4 2.85 8.85c-1.18.46-1.12 1.15-.2 1.43l4.42 1.38 1.7 5.33 2.85-2.55 4.41 3.26c.81.45 1.39.22 1.6-.75l2.95-13.9c.3-1.2-.47-1.75-1.2-1.45Z" /></svg></button>
+                  <button class="manager-fallback" type="button" data-manager-fallback hidden>Всё равно открыть Telegram</button>
+                </div>
               </div>
             </article>
 
@@ -350,16 +349,15 @@
               <div class="manager-card__visual">
                 <img src="assets/manager-02.webp" alt="Аватар второго менеджера" data-manager-avatar />
                 <span class="manager-card__scan" aria-hidden="true"></span>
-                <span class="manager-card__status" data-manager-status><i></i><b>Проверяем</b></span>
               </div>
               <div class="manager-card__content">
-                <small>ОПЕРАТОР 02</small>
+                <div class="manager-card__top"><small>ОПЕРАТОР 02</small><span class="manager-card__status" data-manager-status><i></i><b>Проверяем</b></span></div>
                 <h3 data-manager-name>Менеджер №2</h3>
                 <p data-manager-specialty>Оплата, заказы и помощь</p>
-                <button class="manager-contact" type="button" data-manager-contact>
-                  <span data-manager-action>Проверяем статус…</span>
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 2.4 2.85 8.85c-1.18.46-1.12 1.15-.2 1.43l4.42 1.38 1.7 5.33 2.85-2.55 4.41 3.26c.81.45 1.39.22 1.6-.75l2.95-13.9c.3-1.2-.47-1.75-1.2-1.45Z" /></svg>
-                </button>
+                <div class="manager-card__actions">
+                  <button class="manager-contact" type="button" data-manager-contact><span data-manager-action>Проверяем статус…</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 2.4 2.85 8.85c-1.18.46-1.12 1.15-.2 1.43l4.42 1.38 1.7 5.33 2.85-2.55 4.41 3.26c.81.45 1.39.22 1.6-.75l2.95-13.9c.3-1.2-.47-1.75-1.2-1.45Z" /></svg></button>
+                  <button class="manager-fallback" type="button" data-manager-fallback hidden>Всё равно открыть Telegram</button>
+                </div>
               </div>
             </article>
           </div>
@@ -391,8 +389,8 @@
       <span class="link-transition__line" aria-hidden="true"></span>
     </div>
 
-    <script src="script.js"></script>
-    <script src="community.js"></script>
-    <script src="managers.js"></script>
+    <script src="script.js?v=4"></script>
+    <script src="community.js?v=4"></script>
+    <script src="managers.js?v=4"></script>
   </body>
 </html>

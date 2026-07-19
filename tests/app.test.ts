@@ -80,6 +80,12 @@ describe("Undying Metro API", () => {
     return { cookie, csrf: body.csrfToken };
   }
 
+  it("показывает дружелюбный статус на корневом адресе API", async () => {
+    const response = await app.inject({ method: "GET", url: "/" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: "ok", service: "Undying Metro Shop API" });
+  });
+
   it("показывает двух свободных менеджеров и фиксирует занятость на 10 минут", async () => {
     const initial = await app.inject({ method: "GET", url: "/api/managers" });
     expect(initial.statusCode).toBe(200);

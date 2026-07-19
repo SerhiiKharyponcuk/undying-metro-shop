@@ -1,8 +1,9 @@
+const SITE_CONFIG = window.UNDYING_CONFIG || {};
 const LINKS = {
-  shop: "https://t.me/UNDYINGmetroSHOP",
-  donate: "",
-  telegram: "https://t.me/UNDYINGmetroSHOP",
-  developer: "https://github.com/SerhiiKharyponcuk",
+  shop: SITE_CONFIG.SHOP_TELEGRAM_URL || "",
+  donate: SITE_CONFIG.DONATE_URL || "",
+  telegram: SITE_CONFIG.SHOP_TELEGRAM_URL || "",
+  developer: SITE_CONFIG.DEVELOPER_GITHUB || "",
 };
 
 const toast = document.querySelector("#toast");

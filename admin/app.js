@@ -25,7 +25,7 @@
   };
 
   function endpoint(path) {
-    if (!apiBase) throw new Error("Укажите API_BASE_URL в config.js");
+    if (!apiBase) throw new Error("Сервис временно недоступен. Попробуйте немного позже.");
     return `${apiBase}${path}`;
   }
 

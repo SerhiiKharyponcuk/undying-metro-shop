@@ -74,6 +74,12 @@ export async function registerPublicRoutes(
 ): Promise<void> {
   const { store, config, notifier } = dependencies;
 
+  app.get("/", async () => ({
+    status: "ok",
+    service: "Undying Metro Shop API",
+    message: "Сервер работает. Проверка состояния доступна по адресу /api/health.",
+  }));
+
   app.get("/api/health", async () => ({ status: "ok", service: "undying-metro-api", timestamp: new Date().toISOString() }));
 
   app.get("/api/managers", async () => {

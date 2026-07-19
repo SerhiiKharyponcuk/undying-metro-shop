@@ -32,7 +32,7 @@
   let turnstileLoader;
 
   function endpoint(path) {
-    if (!apiBase) throw new Error("Сервер пока не подключён. Укажите API_BASE_URL в config.js.");
+    if (!apiBase) throw new Error("Сервис временно недоступен. Попробуйте немного позже.");
     return `${apiBase}${path}`;
   }
 

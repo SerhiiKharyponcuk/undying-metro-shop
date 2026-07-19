@@ -4,7 +4,9 @@
   const config = window.UNDYING_CONFIG || {};
   const navigation = window.UNDYING_NAVIGATION;
   const apiBase = String(config.API_BASE_URL || "").replace(/\/$/, "");
-  const managers = Array.isArray(config.MANAGERS) ? config.MANAGERS : [];
+  const managers = Array.isArray(config.MANAGERS)
+    ? config.MANAGERS.map((manager) => ({ ...manager, telegramUrl: normalizeTelegramUrl(manager.telegramUrl) }))
+    : [];
   const managerByKey = new Map(managers.map((manager) => [manager.key, manager]));
   const modal = document.querySelector("#managersModal");
   const cards = [...document.querySelectorAll("[data-manager-key]")];
@@ -16,8 +18,20 @@
   let refreshTimer = 0;
   let countdownTimer = 0;
 
+  function normalizeTelegramUrl(value) {
+    const input = String(value || "").trim();
+    if (/^@[a-zA-Z0-9_]{5,32}$/.test(input)) return `https://t.me/${input.slice(1)}`;
+    if (/^[a-zA-Z0-9_]{5,32}$/.test(input)) return `https://t.me/${input}`;
+    try {
+      const url = new URL(input);
+      return url.protocol === "https:" && ["t.me", "telegram.me"].includes(url.hostname.toLowerCase()) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+
   function endpoint(path) {
-    if (!apiBase) throw new Error("Сервер статусов пока не подключён. Укажите API_BASE_URL в config.js.");
+    if (!apiBase) throw new Error("Не удалось проверить статус менеджеров");
     return `${apiBase}${path}`;
   }
 
@@ -71,14 +85,25 @@
     const status = card.querySelector("[data-manager-status] b");
     const action = card.querySelector("[data-manager-action]");
     const button = card.querySelector("[data-manager-contact]");
+    const fallback = card.querySelector("[data-manager-fallback]");
     const busy = state.status === "busy" && state.busyUntil > serverNow();
     const loading = card.classList.contains("is-claiming");
+    fallback.hidden = true;
 
     if (busy) {
       card.dataset.status = "busy";
       status.textContent = "Занят";
       action.textContent = `Освободится через ${remainingLabel(state.busyUntil)}`;
       button.disabled = true;
+      return;
+    }
+
+    if (state.status === "unavailable") {
+      card.dataset.status = "unavailable";
+      status.textContent = "Нет связи";
+      action.textContent = "Статус временно недоступен";
+      button.disabled = true;
+      fallback.hidden = !manager?.telegramUrl;
       return;
     }
 
@@ -125,7 +150,8 @@
       setMessage("");
       renderAll();
     } catch (error) {
-      if (!quiet) setMessage(error.message, "error");
+      managers.forEach((manager) => states.set(manager.key, { status: "unavailable", busyUntil: null }));
+      if (!quiet) setMessage("Не удалось проверить статус менеджеров. Telegram можно открыть напрямую.", "error");
       renderAll();
     }
   }
@@ -134,7 +160,7 @@
     const key = card.dataset.managerKey;
     const manager = managerByKey.get(key);
     if (!manager?.telegramUrl || !navigation?.isSafeDestination(manager.telegramUrl)) {
-      setMessage("Telegram этого менеджера ещё не указан в config.js.", "error");
+      setMessage("Ссылка на Telegram этого менеджера временно недоступна.", "error");
       return;
     }
 
@@ -153,12 +179,26 @@
     } catch (error) {
       if (error.data?.busyUntil) {
         states.set(key, { status: "busy", busyUntil: new Date(error.data.busyUntil).getTime() });
+      } else {
+        states.set(key, { status: "unavailable", busyUntil: null });
       }
-      setMessage(error.message, "error");
+      setMessage(
+        error.data?.busyUntil
+          ? error.message
+          : "Не удалось проверить статус менеджера. Можно открыть Telegram напрямую.",
+        "error",
+      );
     } finally {
       card.classList.remove("is-claiming");
       renderAll();
     }
+  }
+
+  function openTelegramDirectly(card) {
+    const manager = managerByKey.get(card.dataset.managerKey);
+    if (!manager?.telegramUrl || !navigation?.isSafeDestination(manager.telegramUrl)) return;
+    closeModal();
+    window.setTimeout(() => navigation.openWithTransition(manager.telegramUrl, card.querySelector("[data-manager-contact]")), 80);
   }
 
   function openModal() {
@@ -192,6 +232,7 @@
   });
   document.querySelectorAll("[data-managers-close]").forEach((button) => button.addEventListener("click", closeModal));
   cards.forEach((card) => card.querySelector("[data-manager-contact]").addEventListener("click", () => void claimManager(card)));
+  cards.forEach((card) => card.querySelector("[data-manager-fallback]").addEventListener("click", () => openTelegramDirectly(card)));
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && modal.classList.contains("is-open")) closeModal();
   });
