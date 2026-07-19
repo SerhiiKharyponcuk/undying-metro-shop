@@ -11,10 +11,29 @@
     <title>Undying Metro Shop</title>
     <link rel="icon" href="assets/undying-metro-avatar.webp" type="image/webp" />
     <link rel="preload" href="assets/undying-metro-avatar.webp" as="image" />
+    <script>document.documentElement.classList.add("js");</script>
     <link rel="stylesheet" href="styles.css" />
   </head>
 
   <body>
+    <div class="preloader" id="preloader" role="status" aria-live="polite" aria-label="Загрузка страницы">
+      <div class="preloader__core" aria-hidden="true">
+        <span class="preloader__orbit preloader__orbit--outer"></span>
+        <span class="preloader__orbit preloader__orbit--inner"></span>
+        <img src="assets/undying-metro-avatar.webp" alt="" />
+        <span class="preloader__scanner"></span>
+      </div>
+      <p class="preloader__eyebrow">ИНИЦИАЛИЗАЦИЯ METRO-СИСТЕМЫ</p>
+      <strong class="preloader__title">UNDYING <span>METRO SHOP</span></strong>
+      <div class="preloader__progress" aria-hidden="true">
+        <span id="loaderBar"></span>
+      </div>
+      <div class="preloader__meta">
+        <span>ЗАЩИЩЕННОЕ СОЕДИНЕНИЕ</span>
+        <output id="loaderPercent">0%</output>
+      </div>
+    </div>
+
     <div class="world" aria-hidden="true">
       <div class="world__aurora world__aurora--one"></div>
       <div class="world__aurora world__aurora--two"></div>
@@ -125,6 +144,27 @@
         <strong>Ссылка скоро появится</strong>
         <small>Это временная кнопка-заглушка</small>
       </span>
+    </div>
+
+    <div class="link-transition" id="linkTransition" aria-hidden="true">
+      <div class="link-transition__backdrop" aria-hidden="true"></div>
+      <div class="link-transition__portal" aria-hidden="true">
+        <span></span><span></span><span></span>
+        <div class="link-transition__icon link-transition__icon--telegram">
+          <svg viewBox="0 0 24 24">
+            <path d="M21.6 2.4a1.4 1.4 0 0 0-1.45-.23L2.85 8.85c-1.18.46-1.12 1.15-.2 1.43l4.42 1.38 1.7 5.33c.22.69.11.96.75.96.49 0 .71-.22.98-.49l2.12-2.06 4.41 3.26c.81.45 1.39.22 1.6-.75l2.95-13.9c.3-1.2-.47-1.75-1.2-1.45L6.99 9.97c-.58.23-.57.55-.1.69l3.78 1.18 8.78-5.54c.41-.25.79-.12.48.16l-7.1 6.41-.28 4.12Z" />
+          </svg>
+        </div>
+        <div class="link-transition__icon link-transition__icon--external">
+          <svg viewBox="0 0 24 24">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </div>
+      </div>
+      <p class="link-transition__eyebrow" id="transitionEyebrow">ОТКРЫВАЕМ TELEGRAM</p>
+      <strong class="link-transition__title" id="transitionTitle">Undying Metro Shop</strong>
+      <small class="link-transition__note">Безопасный переход по внешней ссылке</small>
+      <span class="link-transition__line" aria-hidden="true"></span>
     </div>
 
     <script src="script.js"></script>
