@@ -3,6 +3,8 @@ import type {
   AdminSessionRecord,
   ContactType,
   DashboardCounts,
+  ManagerAvailabilityRecord,
+  ManagerClaimResult,
   NotificationState,
   Page,
   ReviewRecord,
@@ -35,6 +37,9 @@ export interface NewTicket {
 }
 
 export interface AppStore {
+  getManagerAvailability(managerKeys: string[]): Promise<ManagerAvailabilityRecord[]>;
+  claimManager(managerKey: string, now: Date, busyUntil: Date): Promise<ManagerClaimResult>;
+
   createReview(input: NewReview): Promise<ReviewRecord>;
   hasRecentDuplicateReview(ipHash: string, contentHash: string, since: Date): Promise<boolean>;
   listApprovedReviews(page: number, pageSize: number): Promise<Page<ReviewRecord>>;

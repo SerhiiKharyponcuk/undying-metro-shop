@@ -49,8 +49,14 @@ npm run admin:create
 window.UNDYING_CONFIG = Object.freeze({
   API_BASE_URL: "https://undying-metro-api.onrender.com",
   TURNSTILE_SITE_KEY: "ваш-публичный-site-key",
+  MANAGERS: [
+    { key: "manager_1", name: "Имя", specialty: "Покупки", telegramUrl: "https://t.me/username_one", avatar: "assets/manager-01.webp" },
+    { key: "manager_2", name: "Имя", specialty: "Оплата", telegramUrl: "https://t.me/username_two", avatar: "assets/manager-02.webp" },
+  ],
 });
 ```
+
+Не меняйте ключи `manager_1` и `manager_2`: по ним backend синхронизирует десятиминутную занятость. Имена, описания, Telegram-ссылки и аватарки можно менять свободно.
 
 2. В GitHub откройте **Settings → Pages** и выберите публикацию ветки `main` из `/ (root)`.
 3. Пользовательский сайт будет доступен по адресу `https://serhiikharyponcuk.github.io/undying-metro-shop/`, панель — в `/admin/`.

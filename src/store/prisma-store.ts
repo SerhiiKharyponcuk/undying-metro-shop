@@ -3,6 +3,8 @@ import type {
   AdminRecord,
   AdminSessionRecord,
   DashboardCounts,
+  ManagerAvailabilityRecord,
+  ManagerClaimResult,
   Page,
   ReviewRecord,
   ReviewStatus,
@@ -82,6 +84,28 @@ function mapTicket(value: any): SupportTicketRecord {
 
 export class PrismaStore implements AppStore {
   constructor(private readonly prisma: PrismaClient) {}
+
+  async getManagerAvailability(managerKeys: string[]): Promise<ManagerAvailabilityRecord[]> {
+    const values = await this.prisma.managerAvailability.findMany({
+      where: { managerKey: { in: managerKeys } },
+    });
+    return values.map((value) => ({ managerKey: value.managerKey, busyUntil: value.busyUntil }));
+  }
+
+  async claimManager(managerKey: string, now: Date, busyUntil: Date): Promise<ManagerClaimResult> {
+    const claimed = await this.prisma.$queryRaw<Array<{ manager_key: string; busy_until: Date }>>`
+      INSERT INTO "manager_availability" ("manager_key", "busy_until", "updated_at")
+      VALUES (${managerKey}, ${busyUntil}, CURRENT_TIMESTAMP)
+      ON CONFLICT ("manager_key") DO UPDATE
+      SET "busy_until" = EXCLUDED."busy_until", "updated_at" = CURRENT_TIMESTAMP
+      WHERE "manager_availability"."busy_until" <= ${now}
+      RETURNING "manager_key", "busy_until"
+    `;
+    if (claimed[0]) return { claimed: true, busyUntil: claimed[0].busy_until };
+
+    const current = await this.prisma.managerAvailability.findUnique({ where: { managerKey } });
+    return { claimed: false, busyUntil: current?.busyUntil ?? now };
+  }
 
   async createReview(input: NewReview): Promise<ReviewRecord> {
     return mapReview(await this.prisma.review.create({ data: input as any }));

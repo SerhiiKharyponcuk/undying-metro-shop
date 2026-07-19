@@ -123,7 +123,7 @@
             </span>
           </a>
 
-          <a class="service-card service-card--manager" href="#" data-link="managers">
+          <a class="service-card service-card--manager" href="#managers" data-managers-open>
             <span class="service-card__icon" aria-hidden="true">
               <svg viewBox="0 0 24 24">
                 <path d="M20 15a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v3h3l2 3 3-3h4a4 4 0 0 0 4-4Z" />
@@ -167,6 +167,16 @@
           </a>
           <span class="socials__line"></span>
         </div>
+
+        <a class="creator-credit" href="https://github.com/SerhiiKharyponcuk" data-link="developer" data-transition-label="SERHII // VOIDFORGE">
+          <span class="creator-credit__mark" aria-hidden="true">VF</span>
+          <span class="creator-credit__copy">
+            <small>АВТОР И FULL-STACK РАЗРАБОТЧИК</small>
+            <strong>SERHII // VOIDFORGE</strong>
+            <span>Создаю быстрые адаптивные сайты, серверные системы, Telegram-интеграции, админ-панели и анимационные интерфейсы.</span>
+          </span>
+          <span class="creator-credit__arrow" aria-hidden="true">↗</span>
+        </a>
 
         <p class="footer-note">ПОДЗЕМНЫЙ ДОСТУП • ЗАЩИЩЕННОЕ СОЕДИНЕНИЕ</p>
       </section>
@@ -296,6 +306,70 @@
       </section>
     </div>
 
+    <div class="community-modal managers-modal" id="managersModal" aria-hidden="true">
+      <button class="community-modal__backdrop" type="button" data-managers-close aria-label="Закрыть выбор менеджера"></button>
+      <section class="community-panel managers-panel" role="dialog" aria-modal="true" aria-labelledby="managersTitle">
+        <header class="community-panel__header">
+          <div class="community-panel__brand">
+            <img src="assets/undying-metro-avatar.webp" alt="" />
+            <span>
+              <small>ЛИНИЯ СВЯЗИ UNDYING</small>
+              <strong id="managersTitle">Выберите менеджера</strong>
+            </span>
+          </div>
+          <button class="icon-button" type="button" data-managers-close aria-label="Закрыть">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+
+        <div class="managers-panel__body">
+          <div class="managers-intro">
+            <span class="managers-intro__pulse" aria-hidden="true"></span>
+            <span><strong>Оперативная связь с командой</strong><small>После перехода менеджер будет отмечен занятым на 10 минут. Выбирайте только одного специалиста.</small></span>
+          </div>
+
+          <div class="manager-grid" id="managerGrid" aria-live="polite">
+            <article class="manager-card" data-manager-key="manager_1" data-status="unknown">
+              <div class="manager-card__visual">
+                <img src="assets/manager-01.webp" alt="Аватар первого менеджера" data-manager-avatar />
+                <span class="manager-card__scan" aria-hidden="true"></span>
+                <span class="manager-card__status" data-manager-status><i></i><b>Проверяем</b></span>
+              </div>
+              <div class="manager-card__content">
+                <small>ОПЕРАТОР 01</small>
+                <h3 data-manager-name>Менеджер №1</h3>
+                <p data-manager-specialty>Покупки, товары и наличие</p>
+                <button class="manager-contact" type="button" data-manager-contact>
+                  <span data-manager-action>Проверяем статус…</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 2.4 2.85 8.85c-1.18.46-1.12 1.15-.2 1.43l4.42 1.38 1.7 5.33 2.85-2.55 4.41 3.26c.81.45 1.39.22 1.6-.75l2.95-13.9c.3-1.2-.47-1.75-1.2-1.45Z" /></svg>
+                </button>
+              </div>
+            </article>
+
+            <article class="manager-card" data-manager-key="manager_2" data-status="unknown">
+              <div class="manager-card__visual">
+                <img src="assets/manager-02.webp" alt="Аватар второго менеджера" data-manager-avatar />
+                <span class="manager-card__scan" aria-hidden="true"></span>
+                <span class="manager-card__status" data-manager-status><i></i><b>Проверяем</b></span>
+              </div>
+              <div class="manager-card__content">
+                <small>ОПЕРАТОР 02</small>
+                <h3 data-manager-name>Менеджер №2</h3>
+                <p data-manager-specialty>Оплата, заказы и помощь</p>
+                <button class="manager-contact" type="button" data-manager-contact>
+                  <span data-manager-action>Проверяем статус…</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 2.4 2.85 8.85c-1.18.46-1.12 1.15-.2 1.43l4.42 1.38 1.7 5.33 2.85-2.55 4.41 3.26c.81.45 1.39.22 1.6-.75l2.95-13.9c.3-1.2-.47-1.75-1.2-1.45Z" /></svg>
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <p class="managers-message" id="managersMessage" role="status"></p>
+          <div class="managers-legend"><span><i></i> Свободен</span><span><i></i> Занят</span><small>Статус обновляется автоматически</small></div>
+        </div>
+      </section>
+    </div>
+
     <div class="link-transition" id="linkTransition" aria-hidden="true">
       <div class="link-transition__backdrop" aria-hidden="true"></div>
       <div class="link-transition__portal" aria-hidden="true">
@@ -319,5 +393,6 @@
 
     <script src="script.js"></script>
     <script src="community.js"></script>
+    <script src="managers.js"></script>
   </body>
 </html>

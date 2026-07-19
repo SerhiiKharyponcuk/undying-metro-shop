@@ -82,3 +82,13 @@ export interface DashboardCounts {
   inProgressTickets: number;
   totalApprovedReviews: number;
 }
+
+export interface ManagerAvailabilityRecord {
+  managerKey: string;
+  busyUntil: Date;
+}
+
+export interface ManagerClaimResult {
+  claimed: boolean;
+  busyUntil: Date;
+}

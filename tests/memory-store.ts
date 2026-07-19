@@ -4,6 +4,8 @@ import type {
   AdminRecord,
   AdminSessionRecord,
   DashboardCounts,
+  ManagerAvailabilityRecord,
+  ManagerClaimResult,
   NotificationState,
   Page,
   ReviewRecord,
@@ -19,6 +21,21 @@ export class MemoryStore implements AppStore {
   reviews: ReviewRecord[] = [];
   tickets: SupportTicketRecord[] = [];
   notifications: Array<{ eventType: string; destination: string; status: NotificationState; error?: string }> = [];
+  managerAvailability = new Map<string, Date>();
+
+  async getManagerAvailability(managerKeys: string[]): Promise<ManagerAvailabilityRecord[]> {
+    return managerKeys.flatMap((managerKey) => {
+      const busyUntil = this.managerAvailability.get(managerKey);
+      return busyUntil ? [{ managerKey, busyUntil }] : [];
+    });
+  }
+
+  async claimManager(managerKey: string, now: Date, busyUntil: Date): Promise<ManagerClaimResult> {
+    const current = this.managerAvailability.get(managerKey);
+    if (current && current > now) return { claimed: false, busyUntil: current };
+    this.managerAvailability.set(managerKey, busyUntil);
+    return { claimed: true, busyUntil };
+  }
 
   async createReview(input: NewReview): Promise<ReviewRecord> {
     const value: ReviewRecord = {

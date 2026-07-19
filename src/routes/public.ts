@@ -40,6 +40,8 @@ const ticketBody = z
 const messageBody = z.object({ message: plainText(2, 3000) });
 const pageQuery = z.object({ page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(20).default(6) });
 const ticketParams = z.object({ number: z.string().regex(/^UMS-\d{6}-[A-Z0-9]{4}$/) });
+const managerKeys = ["manager_1", "manager_2"] as const;
+const managerParams = z.object({ key: z.enum(managerKeys) });
 
 function serializeTicket(ticket: SupportTicketRecord) {
   return {
@@ -73,6 +75,41 @@ export async function registerPublicRoutes(
   const { store, config, notifier } = dependencies;
 
   app.get("/api/health", async () => ({ status: "ok", service: "undying-metro-api", timestamp: new Date().toISOString() }));
+
+  app.get("/api/managers", async () => {
+    const now = new Date();
+    const availability = await store.getManagerAvailability([...managerKeys]);
+    const byKey = new Map(availability.map((item) => [item.managerKey, item.busyUntil]));
+    return {
+      serverTime: now,
+      holdSeconds: 600,
+      items: managerKeys.map((key) => {
+        const busyUntil = byKey.get(key) ?? null;
+        const busy = Boolean(busyUntil && busyUntil > now);
+        return { key, status: busy ? "busy" : "available", busyUntil: busy ? busyUntil : null };
+      }),
+    };
+  });
+
+  app.post(
+    "/api/managers/:key/claim",
+    { config: { rateLimit: { max: 12, timeWindow: "1 hour" } } },
+    async (request, reply) => {
+      const params = managerParams.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Неизвестный менеджер" });
+      const now = new Date();
+      const result = await store.claimManager(params.data.key, now, new Date(now.getTime() + 10 * 60 * 1000));
+      if (!result.claimed) {
+        return reply.code(409).send({
+          key: params.data.key,
+          status: "busy",
+          busyUntil: result.busyUntil,
+          error: "Менеджер уже занят. Выберите другого или дождитесь освобождения.",
+        });
+      }
+      return reply.code(201).send({ key: params.data.key, status: "busy", busyUntil: result.busyUntil });
+    },
+  );
 
   app.get("/api/reviews", async (request, reply) => {
     const parsed = pageQuery.safeParse(request.query);

@@ -80,6 +80,35 @@ describe("Undying Metro API", () => {
     return { cookie, csrf: body.csrfToken };
   }
 
+  it("показывает двух свободных менеджеров и фиксирует занятость на 10 минут", async () => {
+    const initial = await app.inject({ method: "GET", url: "/api/managers" });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json().items).toEqual([
+      { key: "manager_1", status: "available", busyUntil: null },
+      { key: "manager_2", status: "available", busyUntil: null },
+    ]);
+
+    const claimed = await app.inject({ method: "POST", url: "/api/managers/manager_1/claim" });
+    expect(claimed.statusCode).toBe(201);
+    const remaining = new Date(claimed.json().busyUntil).getTime() - Date.now();
+    expect(remaining).toBeGreaterThan(9 * 60 * 1000);
+
+    const status = await app.inject({ method: "GET", url: "/api/managers" });
+    expect(status.json().items[0].status).toBe("busy");
+    expect(status.json().items[1].status).toBe("available");
+  });
+
+  it("не позволяет двум посетителям одновременно занять одного менеджера", async () => {
+    expect((await app.inject({ method: "POST", url: "/api/managers/manager_2/claim" })).statusCode).toBe(201);
+    const repeated = await app.inject({ method: "POST", url: "/api/managers/manager_2/claim" });
+    expect(repeated.statusCode).toBe(409);
+    expect(repeated.json().status).toBe("busy");
+    expect((await app.inject({ method: "POST", url: "/api/managers/unknown/claim" })).statusCode).toBe(400);
+
+    store.managerAvailability.set("manager_2", new Date(Date.now() - 1000));
+    expect((await app.inject({ method: "POST", url: "/api/managers/manager_2/claim" })).statusCode).toBe(201);
+  });
+
   it("создаёт отзыв со статусом pending и отправляет уведомление", async () => {
     const response = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload() });
     expect(response.statusCode).toBe(201);

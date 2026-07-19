@@ -96,21 +96,21 @@ model Review {
 }
 
 model SupportTicket {
-  id               String          @id @default(uuid())
-  publicNumber     String          @unique @map("public_number") @db.VarChar(24)
-  secretTokenHash  String          @map("secret_token_hash")
-  name             String          @db.VarChar(64)
-  contactType      ContactType     @map("contact_type")
-  contact          String          @db.VarChar(160)
-  category         TicketCategory
-  subject          String          @db.VarChar(140)
-  status           TicketStatus    @default(open)
-  ipHash           String          @map("ip_hash") @db.VarChar(64)
-  createdAt        DateTime        @default(now()) @map("created_at")
-  updatedAt        DateTime        @updatedAt @map("updated_at")
-  assignedAdminId  String?         @map("assigned_admin_id")
-  assignedAdmin    Admin?          @relation("TicketAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
-  messages         SupportMessage[]
+  id              String           @id @default(uuid())
+  publicNumber    String           @unique @map("public_number") @db.VarChar(24)
+  secretTokenHash String           @map("secret_token_hash")
+  name            String           @db.VarChar(64)
+  contactType     ContactType      @map("contact_type")
+  contact         String           @db.VarChar(160)
+  category        TicketCategory
+  subject         String           @db.VarChar(140)
+  status          TicketStatus     @default(open)
+  ipHash          String           @map("ip_hash") @db.VarChar(64)
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  assignedAdminId String?          @map("assigned_admin_id")
+  assignedAdmin   Admin?           @relation("TicketAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
+  messages        SupportMessage[]
 
   @@index([status, createdAt])
   @@index([assignedAdminId])
@@ -141,4 +141,13 @@ model NotificationLog {
 
   @@index([createdAt])
   @@map("notification_logs")
+}
+
+model ManagerAvailability {
+  managerKey String   @id @map("manager_key") @db.VarChar(32)
+  busyUntil  DateTime @map("busy_until")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([busyUntil])
+  @@map("manager_availability")
 }

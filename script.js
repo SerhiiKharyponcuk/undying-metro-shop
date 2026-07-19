@@ -1,9 +1,8 @@
-// Добавьте готовые ссылки сюда. Пока значения пустые — кнопки работают как заглушки.
 const LINKS = {
-  shop: "",
-  managers: "",
+  shop: "https://t.me/UNDYINGmetroSHOP",
   donate: "",
-  telegram: "",
+  telegram: "https://t.me/UNDYINGmetroSHOP",
+  developer: "https://github.com/SerhiiKharyponcuk",
 };
 
 const toast = document.querySelector("#toast");
@@ -74,6 +73,7 @@ function isSafeDestination(url) {
 
 function getLinkLabel(link) {
   return (
+    link.dataset.transitionLabel ||
     link.querySelector("strong")?.textContent?.trim() ||
     link.querySelector("span:last-child")?.textContent?.trim() ||
     "Undying Metro Shop"
@@ -104,6 +104,12 @@ function openWithTransition(url, link) {
     window.location.assign(url);
   }, 1050);
 }
+
+window.UNDYING_NAVIGATION = Object.freeze({
+  isSafeDestination,
+  openWithTransition,
+  showPlaceholderMessage,
+});
 
 document.querySelectorAll("[data-link]").forEach((link) => {
   link.addEventListener("click", (event) => {
