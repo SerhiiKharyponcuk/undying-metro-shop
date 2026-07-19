@@ -361,11 +361,6 @@ h1 span {
     0 11px 34px rgba(0, 0, 0, 0.19);
 }
 
-.service-card--rent {
-  --accent: #78aaff;
-  --accent-rgb: 120, 170, 255;
-}
-
 .service-card--manager {
   --accent: #b687ff;
   --accent-rgb: 182, 135, 255;
