@@ -407,6 +407,10 @@ describe("Undying Metro API", () => {
 
     const cancelledBank = await app.inject({ method: "GET", url: "/api/admin/shop-bank", headers: { cookie } });
     expect(cancelledBank.json()).toMatchObject({ directorBalanceUah: "0.00", creatorBalanceUah: "0.00" });
+    const visibleOrders = await app.inject({ method: "GET", url: "/api/admin/escort-orders?page=1&pageSize=50", headers: { cookie } });
+    expect(visibleOrders.json().items.map((order: any) => order.id)).not.toContain(created.json().id);
+    const cancelledOrders = await app.inject({ method: "GET", url: "/api/admin/escort-orders?status=cancelled&page=1&pageSize=50", headers: { cookie } });
+    expect(cancelledOrders.json().items.map((order: any) => order.id)).toContain(created.json().id);
   });
 
   it("защищает расчёты сопровождений и ограничивает число игроков", async () => {
@@ -508,6 +512,48 @@ describe("Undying Metro API", () => {
       payload: { reason: "Шестое нарушение" },
     });
     expect(sixth.statusCode).toBe(409);
+  });
+
+  it("показывает штрафы в отдельном меню и удаляет их с пересчётом ограничений", async () => {
+    const { cookie, csrf } = await login();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/escort-orders",
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { item: "Проверка удаления штрафа", buyerName: "Покупатель", buyerGameId: "4234567890", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Штрафуемый игрок", gameId: "7000000031" }] },
+    });
+    const participantId = created.json().participants[0].id;
+    for (const reason of ["Первое нарушение", "Второе нарушение", "Третье нарушение", "Четвёртое нарушение"]) {
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}/penalties`,
+        headers: { cookie, "x-csrf-token": csrf },
+        payload: { reason },
+      });
+      expect(response.statusCode).toBe(200);
+    }
+
+    const penalties = await app.inject({ method: "GET", url: "/api/admin/penalties?query=7000000031&page=1&pageSize=50", headers: { cookie } });
+    expect(penalties.statusCode).toBe(200);
+    expect(penalties.json().total).toBe(4);
+    const fourth = penalties.json().items.find((penalty: any) => penalty.percentage === 50);
+    const removed = await app.inject({
+      method: "DELETE",
+      url: `/api/admin/penalties/${fourth.id}`,
+      headers: { cookie, "x-csrf-token": csrf },
+    });
+    expect(removed.statusCode).toBe(200);
+
+    const orders = await app.inject({ method: "GET", url: "/api/admin/escort-orders?status=planned&page=1&pageSize=50", headers: { cookie } });
+    const player = orders.json().items.find((order: any) => order.id === created.json().id).participants[0];
+    expect(player.penalties.map((penalty: any) => penalty.percentage)).toEqual([5, 10, 15]);
+    expect(player).toMatchObject({ active: true, permanentlyBanned: false, dailyViolationCount: 3 });
+    expect(player.suspendedUntil).toBeNull();
+    expect(player.penaltyTotalUah).toBe("261.00");
+    const remaining = await app.inject({ method: "GET", url: "/api/admin/penalties?query=7000000031&page=1&pageSize=50", headers: { cookie } });
+    expect(remaining.json().total).toBe(3);
+    const audit = await app.inject({ method: "GET", url: "/api/admin/audit-logs?page=1&pageSize=50", headers: { cookie } });
+    expect(audit.json().items.map((item: any) => item.action)).toContain("escort_penalty.deleted");
   });
 
   it("сохраняет историю замены и передаёт новому игроку остаток доли", async () => {

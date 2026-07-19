@@ -87,6 +87,7 @@ const pageQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
 });
 const profileQuery = pageQuery.extend({ query: z.string().trim().max(80).optional() });
+const penaltyQuery = pageQuery.extend({ query: z.string().trim().max(120).optional() });
 const reportQuery = z.object({ from: orderDateValue, to: orderDateValue });
 
 function orderDate(value: string): Date | null {
@@ -196,6 +197,26 @@ function serializeFinancial(summary: any) {
     penaltiesUah: formatMinor(summary.penaltiesUahMinor),
     paidToEscortsUah: formatMinor(summary.paidToEscortsUahMinor),
     unpaidToEscortsUah: formatMinor(summary.unpaidToEscortsUahMinor),
+  };
+}
+
+function serializePenalty(penalty: any) {
+  return {
+    id: penalty.id,
+    participantId: penalty.participantId,
+    playerProfileId: penalty.playerProfileId,
+    participantName: penalty.participantName,
+    playerGameId: penalty.playerGameId,
+    orderId: penalty.orderId,
+    orderItem: penalty.orderItem,
+    buyerName: penalty.buyerName,
+    sequence: penalty.sequence,
+    violationDate: penalty.violationDate,
+    percentage: penalty.percentage,
+    amountUah: formatMinor(penalty.amountUahMinor),
+    reason: penalty.reason,
+    createdByUsername: penalty.createdByUsername,
+    createdAt: penalty.createdAt,
   };
 }
 
@@ -507,6 +528,33 @@ export async function registerAdminRoutes(
     const order = await store.updateEscortOrderStatus(params.data.id, body.data.status);
     if (order) await audit(request, "escort_order.status_changed", "escort_order", order.id, { status: body.data.status });
     return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Сопровождение не найдено" });
+  });
+
+  app.get("/api/admin/penalties", { preHandler: requireAdmin }, async (request, reply) => {
+    const parsed = penaltyQuery.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Некорректные параметры" });
+    const page = await store.listEscortPenalties(parsed.data.query, parsed.data.page, parsed.data.pageSize);
+    return { ...page, items: page.items.map(serializePenalty) };
+  });
+
+  app.delete("/api/admin/penalties/:id", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Некорректный ID штрафа" });
+    try {
+      const penalty = await store.deleteEscortPenalty(params.data.id);
+      if (!penalty) return reply.code(404).send({ error: "Штраф не найден" });
+      await audit(request, "escort_penalty.deleted", "escort_penalty", penalty.id, {
+        playerGameId: penalty.playerGameId,
+        participantName: penalty.participantName,
+        orderId: penalty.orderId,
+        percentage: penalty.percentage,
+        amountUah: formatMinor(penalty.amountUahMinor),
+        reason: penalty.reason,
+      });
+      return { deletedId: penalty.id };
+    } catch (error) {
+      return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось удалить штраф" });
+    }
   });
 
   app.post("/api/admin/escort-orders/:id/review-code", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {

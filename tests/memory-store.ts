@@ -8,6 +8,7 @@ import type {
   DashboardCounts,
   EscortOrderRecord,
   EscortOrderStatus,
+  EscortPenaltyListRecord,
   EscortPlayerProfileRecord,
   FinancialSummary,
   ManagerAvailabilityRecord,
@@ -214,7 +215,9 @@ export class MemoryStore implements AppStore {
   }
 
   async listEscortOrders(status: EscortOrderStatus | undefined, page: number, pageSize: number): Promise<Page<EscortOrderRecord>> {
-    const values = status ? this.escortOrders.filter((order) => order.status === status) : this.escortOrders;
+    const values = status
+      ? this.escortOrders.filter((order) => order.status === status)
+      : this.escortOrders.filter((order) => order.status !== "cancelled");
     const ordered = [...values].sort((a, b) => b.orderDate.getTime() - a.orderDate.getTime());
     return { items: ordered.slice((page - 1) * pageSize, page * pageSize), total: ordered.length, page, pageSize };
   }
@@ -371,6 +374,116 @@ export class MemoryStore implements AppStore {
     order.reviewCodeIssuedAt = issuedAt;
     order.updatedAt = new Date();
     return order;
+  }
+
+  async listEscortPenalties(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPenaltyListRecord>> {
+    const needle = query?.toLowerCase();
+    const values = this.escortOrders.flatMap((order) => order.participants.flatMap((participant) => participant.penalties.map((penalty) => ({
+      ...penalty,
+      participantName: participant.name,
+      playerGameId: participant.playerProfile?.gameId ?? null,
+      orderId: order.id,
+      orderItem: order.item,
+      buyerName: order.buyerName,
+      createdByUsername: this.admins.find((admin) => admin.id === penalty.createdById)?.username ?? "unknown",
+    })))).filter((penalty) => !needle || [
+      penalty.reason,
+      penalty.participantName,
+      penalty.playerGameId ?? "",
+      penalty.orderItem,
+      penalty.buyerName,
+    ].some((value) => value.toLowerCase().includes(needle)))
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
+    return { items: values.slice((page - 1) * pageSize, page * pageSize), total: values.length, page, pageSize };
+  }
+
+  async deleteEscortPenalty(id: string): Promise<EscortPenaltyListRecord | null> {
+    let found: { order: EscortOrderRecord; participant: EscortOrderRecord["participants"][number]; penalty: EscortOrderRecord["participants"][number]["penalties"][number] } | null = null;
+    for (const order of this.escortOrders) {
+      for (const participant of order.participants) {
+        const penalty = participant.penalties.find((item) => item.id === id);
+        if (penalty) found = { order, participant, penalty };
+      }
+    }
+    if (!found) return null;
+    if (found.participant.paid) throw new Error("Сначала снимите отметку о выплате игроку");
+    const result: EscortPenaltyListRecord = {
+      ...found.penalty,
+      participantName: found.participant.name,
+      playerGameId: found.participant.playerProfile?.gameId ?? null,
+      orderId: found.order.id,
+      orderItem: found.order.item,
+      buyerName: found.order.buyerName,
+      createdByUsername: this.admins.find((admin) => admin.id === found!.penalty.createdById)?.username ?? "unknown",
+    };
+    found.participant.penalties = found.participant.penalties.filter((item) => item.id !== id);
+
+    const targetDate = found.penalty.violationDate ?? found.penalty.createdAt;
+    const dateKey = (value: Date) => value.toISOString().slice(0, 10);
+    const allEntries = this.escortOrders.flatMap((order) => order.participants.flatMap((participant) => participant.penalties.map((penalty) => ({ participant, penalty }))));
+    const remaining = allEntries.filter(({ participant, penalty }) => {
+      const sameOwner = found!.penalty.playerProfileId
+        ? penalty.playerProfileId === found!.penalty.playerProfileId
+        : participant.id === found!.participant.id;
+      return sameOwner && dateKey(penalty.violationDate ?? penalty.createdAt) === dateKey(targetDate);
+    }).sort((left, right) => left.penalty.createdAt.getTime() - right.penalty.createdAt.getTime());
+    const groupIds = new Set(remaining.map(({ penalty }) => penalty.id));
+    const withheld = new Map<string, bigint>();
+    for (const { participant } of remaining) {
+      if (!withheld.has(participant.id)) {
+        withheld.set(participant.id, participant.penalties
+          .filter((penalty) => !groupIds.has(penalty.id))
+          .reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n));
+      }
+    }
+    remaining.forEach(({ participant, penalty }, index) => {
+      const sequence = index + 1;
+      const calculated = sequence <= 4
+        ? calculatePenaltyAmount(participant.shareUahMinor, sequence)
+        : { percentage: 0, amountUahMinor: 0n };
+      const alreadyWithheld = withheld.get(participant.id) ?? 0n;
+      const available = participant.shareUahMinor - alreadyWithheld;
+      penalty.sequence = sequence;
+      penalty.percentage = calculated.percentage;
+      penalty.amountUahMinor = available <= 0n ? 0n : calculated.amountUahMinor > available ? available : calculated.amountUahMinor;
+      withheld.set(participant.id, alreadyWithheld + penalty.amountUahMinor);
+    });
+
+    if (found.penalty.playerProfileId) {
+      const profile = this.playerProfiles.find((item) => item.id === found!.penalty.playerProfileId);
+      const profileEntries = allEntries.filter(({ penalty }) => penalty.playerProfileId === found!.penalty.playerProfileId);
+      const groups = new Map<string, typeof profileEntries>();
+      profileEntries.forEach((entry) => {
+        const key = dateKey(entry.penalty.violationDate ?? entry.penalty.createdAt);
+        groups.set(key, [...(groups.get(key) ?? []), entry]);
+      });
+      const permanentlyBanned = [...groups.values()].some((items) => items.length >= 5);
+      const now = new Date();
+      const suspendedUntil = permanentlyBanned ? null : [...groups.values()]
+        .filter((items) => items.length >= 4)
+        .map((items) => new Date(items.sort((left, right) => left.penalty.createdAt.getTime() - right.penalty.createdAt.getTime())[3]!.penalty.createdAt.getTime() + 24 * 60 * 60 * 1000))
+        .filter((value) => value > now)
+        .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
+      if (profile) {
+        profile.permanentlyBanned = permanentlyBanned;
+        profile.bannedAt = permanentlyBanned ? profile.bannedAt ?? now : null;
+        profile.suspendedUntil = suspendedUntil;
+      }
+      const restricted = permanentlyBanned || Boolean(suspendedUntil);
+      this.escortOrders.flatMap((order) => order.participants)
+        .filter((participant) => participant.playerProfileId === found!.penalty.playerProfileId && !participant.replacedAt)
+        .forEach((participant) => {
+          participant.active = !restricted;
+          participant.excludedAt = restricted ? now : null;
+          participant.dailyViolationCount = participant.penalties.filter((penalty) => dateKey(penalty.violationDate ?? penalty.createdAt) === dateKey(now)).length;
+        });
+    } else {
+      found.participant.active = remaining.length < 4;
+      found.participant.excludedAt = remaining.length >= 4 ? found.participant.excludedAt ?? new Date() : null;
+      found.participant.dailyViolationCount = remaining.length;
+    }
+    found.order.updatedAt = new Date();
+    return result;
   }
 
   async getDirectorBankBalance(): Promise<bigint> {

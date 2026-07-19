@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#05090b" />
     <title>Undying Metro — Админ-панель</title>
     <link rel="icon" href="../assets/undying-metro-avatar.webp" type="image/webp" />
-    <link rel="stylesheet" href="styles.css?v=14" />
+    <link rel="stylesheet" href="styles.css?v=15" />
     <script src="../config.js?v=11"></script>
   </head>
   <body>
@@ -60,6 +60,7 @@
           <button type="button" data-admin-tab="escorts">Сопроводы</button>
           <button type="button" data-admin-tab="completed">Выполненные <b id="completedBadge">0</b></button>
           <button type="button" data-admin-tab="players">Игроки</button>
+          <button type="button" data-admin-tab="penalties">Штрафы <b id="penaltyBadge">0</b></button>
           <button type="button" data-admin-tab="reports">Финансы</button>
           <button type="button" data-admin-tab="audit">Журнал</button>
           <button type="button" data-admin-tab="accounts" id="accountsTab" hidden>Аккаунты</button>
@@ -71,6 +72,14 @@
             <input id="playerSearch" placeholder="Имя, PUBG ID или контакт" />
           </div>
           <div class="admin-list profile-grid" id="playerProfiles"></div>
+        </section>
+
+        <section class="admin-section" data-admin-section="penalties" hidden>
+          <div class="section-toolbar">
+            <div><h2>Управление штрафами</h2><p>Все нарушения сопровождающих. Ошибочный штраф можно удалить с автоматическим пересчётом процентов и блокировок.</p></div>
+            <input id="penaltySearch" placeholder="Игрок, PUBG ID, заказ или причина" />
+          </div>
+          <div class="admin-list penalty-management-list" id="adminPenalties"></div>
         </section>
 
         <section class="admin-section" data-admin-section="reports" hidden>
@@ -139,7 +148,7 @@
         <section class="admin-section escort-section" data-admin-section="escorts" hidden>
           <div class="section-toolbar">
             <div><h2>Новое сопровождение</h2><p>3% директору компании, 10% создателю, остальные 87% автоматически делятся между сопровождающими.</p></div>
-            <label><span>История</span><select id="escortFilter"><option value="">Все статусы</option><option value="planned">Запланировано</option><option value="completed">Завершено</option><option value="paid">Выплачено</option><option value="cancelled">Отменено</option></select></label>
+            <label><span>История</span><select id="escortFilter"><option value="">Все активные</option><option value="planned">Запланировано</option><option value="completed">Завершено</option><option value="paid">Выплачено</option></select></label>
           </div>
 
           <div class="discipline-panel">
@@ -225,6 +234,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=14"></script>
+    <script src="app.js?v=15"></script>
   </body>
 </html>

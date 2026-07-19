@@ -112,6 +112,7 @@ window.UNDYING_CONFIG = Object.freeze({
 - `PATCH /api/admin/escort-orders/:id/status`
 - `PATCH /api/admin/escort-orders/:id/participants/:participantId`
 - `POST /api/admin/escort-orders/:id/participants/:participantId/penalties`
+- `GET /api/admin/penalties`, `DELETE /api/admin/penalties/:id` — журнал и удаление ошибочных штрафов с перерасчётом
 - `POST /api/admin/escort-orders/:id/participants/:participantId/replacement`
 - `GET /api/admin/shop-bank`
 - `GET /api/admin/player-profiles`

@@ -189,6 +189,15 @@ export interface AuditLogRecord {
   createdAt: Date;
 }
 
+export interface EscortPenaltyListRecord extends EscortPenaltyRecord {
+  participantName: string;
+  playerGameId: string | null;
+  orderId: string;
+  orderItem: string;
+  buyerName: string;
+  createdByUsername: string;
+}
+
 export interface FinancialSummary {
   from: Date;
   to: Date;

@@ -230,6 +230,14 @@ textarea { line-height:1.5; resize:vertical; }
 .escort-mini-form button { min-height:34px; padding:0 10px; border:1px solid rgba(85,244,225,.16); border-radius:8px; color:#aee7df; background:rgba(85,244,225,.06); cursor:pointer; font-size:7px; font-weight:800; }
 .escort-mini-form--penalty button { color:#ffaaa5; border-color:rgba(255,95,87,.2); background:rgba(255,95,87,.06); }
 .escort-mini-form--replacement input:nth-of-type(2) { grid-column:1/2; }
+.penalty-management-list { display:grid; gap:8px; }
+.penalty-management-card { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:13px; border:1px solid rgba(255,95,87,.13); border-radius:12px; background:rgba(255,95,87,.035); }
+.penalty-management-card h3 { margin:0; color:#d8e4e2; font-size:10px; }
+.penalty-management-card p { margin:5px 0; color:#718481; font-size:8px; }
+.penalty-management-card strong { display:block; color:#ffaaa5; font-size:8px; line-height:1.5; }
+.penalty-management-card small { display:block; margin-top:5px; color:#647875; font-size:7px; }
+.penalty-delete { flex:0 0 auto; min-height:34px; padding:0 11px; border:1px solid rgba(255,95,87,.24); border-radius:9px; color:#ffaaa5; background:rgba(255,95,87,.07); cursor:pointer; font-size:7px; font-weight:900; }
+.penalty-delete:hover { border-color:rgba(255,95,87,.48); background:rgba(255,95,87,.13); }
 
 .admin-app[data-access-mode="observer"] .escort-form,
 .admin-app[data-access-mode="observer"] .review-actions,
@@ -283,4 +291,6 @@ textarea { line-height:1.5; resize:vertical; }
   .escort-preview,.escort-order__money { grid-template-columns:1fr 1fr; }
   .escort-order__head { align-items:stretch; flex-direction:column; }
   .escort-order__head select { width:100%; }
+  .penalty-management-card { align-items:stretch; flex-direction:column; }
+  .penalty-delete { width:100%; }
 }

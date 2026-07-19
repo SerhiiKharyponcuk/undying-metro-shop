@@ -142,7 +142,7 @@
     try {
       const dashboard = await api("/api/admin/dashboard", { method: "GET" });
       showApp(dashboard);
-      await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadPlayerProfiles(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
+      await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadPlayerProfiles(), loadPenalties(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
     } catch (error) {
       showLogin(error.status === 401 ? "" : error.message);
     }
@@ -178,6 +178,7 @@
       activateTab(button.dataset.adminTab);
       if (button.dataset.adminTab === "completed") void loadCompletedEscorts();
       if (button.dataset.adminTab === "players") void loadPlayerProfiles();
+      if (button.dataset.adminTab === "penalties") void loadPenalties();
       if (button.dataset.adminTab === "reports") void loadFinancialReport();
       if (button.dataset.adminTab === "audit") void loadAuditLogs();
       if (button.dataset.adminTab === "accounts") void loadAccounts();
@@ -375,6 +376,7 @@
     statusSelect.addEventListener("change", async () => {
       try {
         await api(`/api/admin/escort-orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: statusSelect.value }) });
+        if (statusSelect.value === "cancelled") globalStatus.textContent = "Заказ отменён и скрыт из списка сопровождений";
         await Promise.all([loadEscortOrders(), loadCompletedEscorts(), refreshDashboard()]);
       } catch (error) { globalStatus.textContent = error.message; }
     });
@@ -463,7 +465,7 @@
           try {
             await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}/penalties`, { method: "POST", body: JSON.stringify({ reason: reason.value }) });
             globalStatus.textContent = "Штраф зафиксирован и зачислен в банк Metro Shop";
-            await loadEscortOrders();
+            await Promise.all([loadEscortOrders(), loadPenalties(), loadPlayerProfiles()]);
           } catch (error) { globalStatus.textContent = error.message; penalize.disabled = false; }
         });
 
@@ -731,6 +733,61 @@
     } catch (error) { container.replaceChildren(empty("Ошибка загрузки", error.message)); }
   }
 
+  function penaltyElement(penalty) {
+    const card = document.createElement("article");
+    card.className = "penalty-management-card";
+    const content = document.createElement("div");
+    const title = document.createElement("h3");
+    title.textContent = `${penalty.participantName}${penalty.playerGameId ? ` • PUBG ID ${penalty.playerGameId}` : ""}`;
+    const meta = document.createElement("p");
+    meta.textContent = `${penalty.orderItem} • Покупатель: ${penalty.buyerName} • ${new Date(penalty.createdAt).toLocaleString("ru-RU")}`;
+    const reason = document.createElement("strong");
+    reason.textContent = penalty.percentage
+      ? `Нарушение ${penalty.sequence}: −${penalty.percentage}% (${money(penalty.amountUah)}) — ${penalty.reason}`
+      : `Нарушение ${penalty.sequence}: постоянная блокировка — ${penalty.reason}`;
+    const author = document.createElement("small");
+    author.textContent = `Добавил: ${penalty.createdByUsername}`;
+    content.append(title, meta, reason, author);
+    card.append(content);
+    if (canWrite()) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "penalty-delete";
+      remove.textContent = "Удалить штраф";
+      writeControl(remove);
+      remove.addEventListener("click", async () => {
+        if (!window.confirm(`Удалить штраф игрока ${penalty.participantName}? Проценты и блокировка будут пересчитаны.`)) return;
+        remove.disabled = true;
+        try {
+          await api(`/api/admin/penalties/${penalty.id}`, { method: "DELETE" });
+          globalStatus.textContent = "Штраф удалён, выплаты и ограничения пересчитаны";
+          await Promise.all([loadPenalties(), loadEscortOrders(), loadPlayerProfiles(), loadFinancialReport(), loadAuditLogs()]);
+        } catch (error) {
+          globalStatus.textContent = error.message;
+          remove.disabled = false;
+        }
+      });
+      card.append(remove);
+    }
+    return card;
+  }
+
+  async function loadPenalties() {
+    const container = document.querySelector("#adminPenalties");
+    if (!container) return;
+    container.replaceChildren(empty("Загрузка…", "Получаем журнал штрафов"));
+    try {
+      const query = document.querySelector("#penaltySearch").value.trim();
+      const result = await api(`/api/admin/penalties?query=${encodeURIComponent(query)}&page=1&pageSize=100`, { method: "GET" });
+      document.querySelector("#penaltyBadge").textContent = result.total;
+      container.replaceChildren();
+      if (!result.items.length) container.append(empty("Штрафов нет", "Здесь появятся зафиксированные нарушения сопровождающих."));
+      result.items.forEach((penalty) => container.append(penaltyElement(penalty)));
+    } catch (error) {
+      container.replaceChildren(empty("Ошибка загрузки", error.message));
+    }
+  }
+
   function reportDates() {
     const today = new Date().toISOString().slice(0, 10);
     const month = `${today.slice(0, 8)}01`;
@@ -818,7 +875,7 @@
   async function refreshAll() {
     globalStatus.textContent = "";
     await refreshDashboard();
-    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadPlayerProfiles(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
+    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadPlayerProfiles(), loadPenalties(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
     if (activeTicketId) await loadTicketDetail(activeTicketId);
   }
 
@@ -838,6 +895,7 @@
       return;
     }
     if (activeTab === "players") { await loadPlayerProfiles(); return; }
+    if (activeTab === "penalties") { await loadPenalties(); return; }
     if (activeTab === "reports") { await loadFinancialReport(); return; }
     if (activeTab === "audit") { await loadAuditLogs(); return; }
     if (activeTab === "accounts") { await loadAccounts(); return; }
@@ -871,6 +929,7 @@
 
   document.querySelector("#refreshButton").addEventListener("click", () => void refreshAll());
   document.querySelector("#playerSearch").addEventListener("input", () => void loadPlayerProfiles());
+  document.querySelector("#penaltySearch").addEventListener("input", () => void loadPenalties());
   document.querySelector("#loadReport").addEventListener("click", () => void loadFinancialReport());
   document.querySelector("#downloadReport").addEventListener("click", () => void downloadFinancialReport());
   document.querySelector("#accountForm").addEventListener("submit", async (event) => {
