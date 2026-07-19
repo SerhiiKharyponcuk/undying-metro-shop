@@ -32,6 +32,7 @@
           <label id="otpField" hidden><span>Код 2FA</span><input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" /></label>
           <p class="admin-status" id="loginStatus" role="status"></p>
           <button class="admin-primary" type="submit"><span>Войти</span><i></i></button>
+          <button id="passkeyLoginButton" type="button">Войти через Face ID / Passkey</button>
         </form>
       </section>
     </main>
@@ -42,7 +43,7 @@
           <img src="../assets/undying-metro-avatar.webp" alt="" />
           <span><small>СИСТЕМА UNDYING METRO</small><strong>Управление</strong></span>
         </a>
-        <div class="admin-user"><span class="admin-access-badge" id="adminAccessBadge"></span><span id="adminUsername"></span><button id="logoutButton" type="button">Выйти</button></div>
+        <div class="admin-user"><span class="admin-access-badge" id="adminAccessBadge"></span><span id="adminUsername"></span><button id="registerPasskeyButton" type="button">Добавить Face ID</button><button id="logoutButton" type="button">Выйти</button></div>
       </header>
 
       <main class="admin-main">
@@ -67,16 +68,26 @@
           <button class="is-active" type="button" data-admin-tab="reviews">Отзывы <b id="reviewBadge">0</b></button>
           <button type="button" data-admin-tab="tickets">Поддержка <b id="ticketBadge">0</b></button>
           <button type="button" data-admin-tab="escorts">Сопроводы</button>
+          <button type="button" data-admin-tab="calendar">Календарь</button>
           <button type="button" data-admin-tab="completed">Выполненные <b id="completedBadge">0</b></button>
           <button type="button" data-admin-tab="archive">Архив</button>
           <button type="button" data-admin-tab="players">Игроки</button>
           <button type="button" data-admin-tab="penalties">Штрафы <b id="penaltyBadge">0</b></button>
+          <button type="button" data-admin-tab="appeals">Оспаривания</button>
           <button type="button" data-admin-tab="payments">Выплаты</button>
           <button type="button" data-admin-tab="reports">Финансы</button>
           <button type="button" data-admin-tab="analytics">Аналитика</button>
           <button type="button" data-admin-tab="audit">Журнал</button>
           <button type="button" data-admin-tab="accounts" id="accountsTab" hidden>Аккаунты</button>
         </nav>
+
+        <section class="admin-section" data-admin-section="calendar" hidden>
+          <div class="section-toolbar">
+            <div><h2>Календарь сопровождений</h2><p>Заказы сгруппированы по дате, статусу и назначенным игрокам.</p></div>
+            <div class="toolbar-fields"><input id="calendarFrom" type="date" /><input id="calendarTo" type="date" /></div>
+          </div>
+          <div class="admin-list" id="escortCalendar"></div>
+        </section>
 
         <section class="admin-section" data-admin-section="players" hidden>
           <div class="section-toolbar">
@@ -94,6 +105,11 @@
           <div class="admin-list penalty-management-list" id="adminPenalties"></div>
         </section>
 
+        <section class="admin-section" data-admin-section="appeals" hidden>
+          <div class="section-toolbar"><div><h2>Оспаривания штрафов</h2><p>Рассмотрите объяснение игрока и отправьте решение.</p></div><select id="appealFilter"><option value="pending">Ожидают</option><option value="">Все</option><option value="approved">Одобрены</option><option value="rejected">Отклонены</option></select></div>
+          <div class="admin-list" id="penaltyAppeals"></div>
+        </section>
+
         <section class="admin-section" data-admin-section="reports" hidden>
           <div class="section-toolbar">
             <div><h2>Финансовый отчёт</h2><p>Оборот, банки, штрафы и выплаты сопровождающим за выбранный период.</p></div>
@@ -103,6 +119,7 @@
               <button id="loadReport" type="button">Показать</button>
               <button id="downloadReport" type="button">CSV</button>
               <button id="downloadBackup" type="button">Резервная копия</button>
+              <button id="restoreBackup" type="button">Восстановить</button><input id="restoreBackupFile" type="file" accept="application/json,.json" hidden />
             </div>
           </div>
           <div class="report-grid" id="financialReport"></div>
@@ -262,6 +279,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=19"></script>
+    <script src="app.js?v=20"></script>
   </body>
 </html>

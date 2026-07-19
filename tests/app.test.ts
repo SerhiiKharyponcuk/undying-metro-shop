@@ -33,7 +33,8 @@ const config: AppConfig = {
   turnstileRequired: false,
   turnstileSecretKey: "",
   telegramBotToken: "",
-  telegramAdminChatIds: [],
+  telegramAdminChatIds: ["123"],
+  telegramWebhookSecret: "w".repeat(32),
   adminPanelUrl: "https://example.test/admin/",
 };
 
@@ -255,6 +256,101 @@ describe("Undying Metro API", () => {
       headers: { authorization: `Bearer ${authenticated.sessionToken}` },
     });
     expect(expired.statusCode).toBe(401);
+  });
+
+  it("opens protected player and buyer portals and processes a penalty appeal", async () => {
+    const order = await seedCompletedPurchase();
+    const auth = await login();
+    const participant = order.participants[0]!;
+    const profile = store.playerProfiles.find((item) => item.id === participant.playerProfileId)!;
+
+    const accessCode = await app.inject({
+      method: "POST",
+      url: `/api/admin/player-profiles/${profile.id}/portal-code`,
+      headers: { cookie: auth.cookie, "x-csrf-token": auth.csrf },
+      payload: {},
+    });
+    expect(accessCode.statusCode).toBe(200);
+
+    const penalty = await app.inject({
+      method: "POST",
+      url: `/api/admin/escort-orders/${order.id}/participants/${participant.id}/penalties`,
+      headers: { cookie: auth.cookie, "x-csrf-token": auth.csrf },
+      payload: { reason: "Тестове порушення правил супроводу" },
+    });
+    expect(penalty.statusCode).toBe(200);
+
+    const portal = await app.inject({
+      method: "GET",
+      url: `/api/escort-portal/${profile.gameId}`,
+      headers: { "x-player-code": accessCode.json().code },
+    });
+    expect(portal.statusCode).toBe(200);
+    expect(portal.json().orders[0].penalties).toHaveLength(1);
+
+    const appeal = await app.inject({
+      method: "POST",
+      url: `/api/escort-portal/${profile.gameId}/appeals`,
+      headers: { "x-player-code": accessCode.json().code },
+      payload: { penaltyId: portal.json().orders[0].penalties[0].id, message: "Прошу переглянути штраф, бо маю підтвердження." },
+    });
+    expect(appeal.statusCode).toBe(201);
+
+    const reviewAppeal = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/penalty-appeals/${appeal.json().id}`,
+      headers: { cookie: auth.cookie, "x-csrf-token": auth.csrf },
+      payload: { status: "approved", adminReply: "Оскарження прийнято до перевірки." },
+    });
+    expect(reviewAppeal.statusCode).toBe(200);
+
+    const buyer = await app.inject({ method: "POST", url: "/api/orders/lookup", payload: { gameId: "1234567890", code: "ABCDEFGH23" } });
+    expect(buyer.statusCode).toBe(200);
+    expect(buyer.json()).toMatchObject({ status: "completed" });
+  });
+
+  it("provides readiness, backups, and Passkey registration options", async () => {
+    await seedCompletedPurchase();
+    const auth = await login();
+    const readiness = await app.inject({ method: "GET", url: "/api/health/ready" });
+    expect(readiness.statusCode).toBe(200);
+    expect(readiness.json()).toMatchObject({ status: "ready", database: "ok" });
+
+    const backup = await app.inject({ method: "GET", url: "/api/admin/backups/latest", headers: { cookie: auth.cookie } });
+    expect(backup.statusCode).toBe(200);
+    expect(backup.json()).toMatchObject({ version: 1 });
+    store.escortOrders = [];
+    const restored = await app.inject({
+      method: "POST",
+      url: "/api/admin/backups/restore",
+      headers: { cookie: auth.cookie, "x-csrf-token": auth.csrf },
+      payload: { confirmation: "RESTORE", backup: backup.json() },
+    });
+    expect(restored.statusCode).toBe(200);
+    expect(store.escortOrders).toHaveLength(1);
+
+    const options = await app.inject({
+      method: "POST",
+      url: "/api/admin/passkeys/registration-options",
+      headers: { cookie: auth.cookie, "x-csrf-token": auth.csrf },
+      payload: {},
+    });
+    expect(options.statusCode).toBe(200);
+    expect(options.json().challenge).toBeTruthy();
+    expect(options.json().rp.id).toBe("example.test");
+  });
+
+  it("accepts protected Telegram commands for order status", async () => {
+    const order = await seedCompletedPurchase();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/telegram/webhook",
+      headers: { "x-telegram-bot-api-secret-token": config.telegramWebhookSecret },
+      payload: { message: { chat: { id: 123 }, text: `/status ${order.id.slice(0, 8)} paid` } },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(store.escortOrders[0]?.status).toBe("paid");
+    expect(store.auditLogs.some((item) => item.action === "telegram.order_status")).toBe(true);
   });
 
   it("пускает второго администратора в режим наблюдения и передаёт ему управление после выхода первого", async () => {

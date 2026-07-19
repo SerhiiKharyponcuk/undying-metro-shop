@@ -18,6 +18,9 @@ import type {
   SupportMessageRecord,
   SupportTicketRecord,
   TicketStatus,
+  PenaltyAppealRecord,
+  PenaltyAppealStatus,
+  AdminPasskeyRecord,
 } from "../types/domain.js";
 import type { AdminSessionPresence, AppStore, NewEscortOrder, NewReview, NewTicket, VerifiedReviewResult } from "./store.js";
 import { calculatePenaltyAmount } from "../lib/escort-calculation.js";
@@ -105,6 +108,8 @@ function mapAdmin(value: any): AdminRecord {
     twoFactorSecret: value.twoFactorSecret ?? null,
     twoFactorEnabled: value.twoFactorEnabled ?? false,
     createdAt: value.createdAt,
+    passkeyChallenge: value.passkeyChallenge ?? null,
+    passkeyChallengeExpiresAt: value.passkeyChallengeExpiresAt ?? null,
   };
 }
 
@@ -123,6 +128,44 @@ function mapPlayerProfile(value: any): EscortPlayerProfileRecord {
     penaltyCount: value._count?.penalties,
     earnedUahMinor: value.earnedUahMinor,
     withheldUahMinor: value.withheldUahMinor,
+    paidUahMinor: value.paidUahMinor,
+    balanceUahMinor: value.balanceUahMinor,
+    portalCodeHash: value.portalCodeHash ?? null,
+  };
+}
+
+function mapAppeal(value: any): PenaltyAppealRecord {
+  return {
+    id: value.id,
+    penaltyId: value.penaltyId,
+    playerProfileId: value.playerProfileId,
+    playerName: value.playerProfile.displayName,
+    gameId: value.playerProfile.gameId,
+    penaltyReason: value.penalty.reason,
+    penaltyAmountUahMinor: value.penalty.amountUahMinor,
+    message: value.message,
+    status: value.status,
+    adminReply: value.adminReply,
+    reviewedById: value.reviewedById,
+    reviewedByUsername: value.reviewedBy?.username ?? null,
+    createdAt: value.createdAt,
+    reviewedAt: value.reviewedAt,
+  };
+}
+
+function mapPasskey(value: any): AdminPasskeyRecord {
+  return {
+    id: value.id,
+    adminId: value.adminId,
+    credentialId: value.credentialId,
+    publicKey: new Uint8Array(value.publicKey),
+    counter: value.counter,
+    transports: value.transports ?? [],
+    deviceType: value.deviceType,
+    backedUp: value.backedUp,
+    createdAt: value.createdAt,
+    lastUsedAt: value.lastUsedAt,
+    admin: value.admin ? mapAdmin(value.admin) : undefined,
   };
 }
 
@@ -809,14 +852,24 @@ export class PrismaStore implements AppStore {
       this.prisma.escortPlayerProfile.count({ where }),
     ]);
     const items = await Promise.all(profiles.map(async (profile) => {
-      const [earned, withheld] = await Promise.all([
-        this.prisma.escortParticipant.aggregate({ where: { playerProfileId: profile.id }, _sum: { shareUahMinor: true } }),
-        this.prisma.escortPenalty.aggregate({ where: { playerProfileId: profile.id }, _sum: { amountUahMinor: true } }),
-      ]);
+      const participants = await this.prisma.escortParticipant.findMany({
+        where: { playerProfileId: profile.id },
+        include: { penalties: true },
+      });
+      const earnedUahMinor = participants.reduce((sum, item) => sum + item.shareUahMinor, 0n);
+      const withheldUahMinor = participants.reduce((sum, item) => sum + item.penalties.reduce((value, penalty) => value + penalty.amountUahMinor, 0n), 0n);
+      const paidUahMinor = participants.filter((item) => item.paid && !item.replacedAt).reduce(
+        (sum, item) => sum + item.shareUahMinor - item.penalties.reduce((value, penalty) => value + penalty.amountUahMinor, 0n), 0n,
+      );
+      const balanceUahMinor = participants.filter((item) => !item.paid && !item.replacedAt).reduce(
+        (sum, item) => sum + item.shareUahMinor - item.penalties.reduce((value, penalty) => value + penalty.amountUahMinor, 0n), 0n,
+      );
       return mapPlayerProfile({
         ...profile,
-        earnedUahMinor: earned._sum.shareUahMinor ?? 0n,
-        withheldUahMinor: withheld._sum.amountUahMinor ?? 0n,
+        earnedUahMinor,
+        withheldUahMinor,
+        paidUahMinor,
+        balanceUahMinor,
       });
     }));
     return { items, total, page, pageSize };
@@ -828,15 +881,77 @@ export class PrismaStore implements AppStore {
       include: { _count: { select: { participants: true, penalties: true } } },
     });
     if (!profile) return null;
-    const [earned, withheld] = await Promise.all([
-      this.prisma.escortParticipant.aggregate({ where: { playerProfileId: id }, _sum: { shareUahMinor: true } }),
-      this.prisma.escortPenalty.aggregate({ where: { playerProfileId: id }, _sum: { amountUahMinor: true } }),
-    ]);
+    const participants = await this.prisma.escortParticipant.findMany({ where: { playerProfileId: id }, include: { penalties: true } });
+    const earnedUahMinor = participants.reduce((sum, item) => sum + item.shareUahMinor, 0n);
+    const withheldUahMinor = participants.reduce((sum, item) => sum + item.penalties.reduce((value, penalty) => value + penalty.amountUahMinor, 0n), 0n);
+    const paidUahMinor = participants.filter((item) => item.paid && !item.replacedAt).reduce((sum, item) => sum + item.shareUahMinor - item.penalties.reduce((value, penalty) => value + penalty.amountUahMinor, 0n), 0n);
+    const balanceUahMinor = participants.filter((item) => !item.paid && !item.replacedAt).reduce((sum, item) => sum + item.shareUahMinor - item.penalties.reduce((value, penalty) => value + penalty.amountUahMinor, 0n), 0n);
     return mapPlayerProfile({
       ...profile,
-      earnedUahMinor: earned._sum.shareUahMinor ?? 0n,
-      withheldUahMinor: withheld._sum.amountUahMinor ?? 0n,
+      earnedUahMinor,
+      withheldUahMinor,
+      paidUahMinor,
+      balanceUahMinor,
     });
+  }
+
+  async findEscortPlayerProfileByGameId(gameId: string): Promise<EscortPlayerProfileRecord | null> {
+    const profile = await this.prisma.escortPlayerProfile.findUnique({ where: { gameId } });
+    return profile ? mapPlayerProfile(profile) : null;
+  }
+
+  async listEscortOrdersByPlayerProfile(playerProfileId: string): Promise<EscortOrderRecord[]> {
+    const orders = await this.prisma.escortOrder.findMany({
+      where: { participants: { some: { playerProfileId } } },
+      include: escortOrderInclude,
+      orderBy: [{ orderDate: "desc" }, { createdAt: "desc" }],
+    });
+    return orders.map(mapEscortOrder);
+  }
+
+  async rotateEscortPortalCode(id: string, portalCodeHash: string): Promise<EscortPlayerProfileRecord | null> {
+    const existing = await this.prisma.escortPlayerProfile.findUnique({ where: { id } });
+    if (!existing) return null;
+    return mapPlayerProfile(await this.prisma.escortPlayerProfile.update({ where: { id }, data: { portalCodeHash } }));
+  }
+
+  async findBuyerOrder(gameId: string, reviewCodeHash: string): Promise<EscortOrderRecord | null> {
+    const order = await this.prisma.escortOrder.findFirst({
+      where: { buyerGameId: gameId, reviewCodeHash },
+      include: escortOrderInclude,
+      orderBy: [{ orderDate: "desc" }, { createdAt: "desc" }],
+    });
+    return order ? mapEscortOrder(order) : null;
+  }
+
+  async createPenaltyAppeal(penaltyId: string, playerProfileId: string, message: string): Promise<PenaltyAppealRecord | null> {
+    const penalty = await this.prisma.escortPenalty.findFirst({ where: { id: penaltyId, playerProfileId } });
+    if (!penalty) return null;
+    const existing = await this.prisma.penaltyAppeal.findFirst({ where: { penaltyId, playerProfileId, status: "pending" } });
+    if (existing) throw new Error("Оскарження цього штрафу вже очікує розгляду");
+    return mapAppeal(await this.prisma.penaltyAppeal.create({
+      data: { penaltyId, playerProfileId, message },
+      include: { penalty: true, playerProfile: true, reviewedBy: true },
+    }));
+  }
+
+  async listPenaltyAppeals(status?: PenaltyAppealStatus): Promise<PenaltyAppealRecord[]> {
+    const values = await this.prisma.penaltyAppeal.findMany({
+      where: status ? { status: status as any } : {},
+      include: { penalty: true, playerProfile: true, reviewedBy: true },
+      orderBy: { createdAt: "desc" },
+    });
+    return values.map(mapAppeal);
+  }
+
+  async updatePenaltyAppeal(id: string, input: { status: PenaltyAppealStatus; adminReply: string | null; reviewedById: string }): Promise<PenaltyAppealRecord | null> {
+    const existing = await this.prisma.penaltyAppeal.findUnique({ where: { id } });
+    if (!existing) return null;
+    return mapAppeal(await this.prisma.penaltyAppeal.update({
+      where: { id },
+      data: { ...input, reviewedAt: new Date() } as any,
+      include: { penalty: true, playerProfile: true, reviewedBy: true },
+    }));
   }
 
   async getShopBankBalance(): Promise<bigint> {
@@ -910,6 +1025,34 @@ export class PrismaStore implements AppStore {
       });
     });
     return mapSession(value);
+  }
+
+  async setAdminPasskeyChallenge(id: string, challenge: string | null, expiresAt: Date | null): Promise<AdminRecord | null> {
+    const existing = await this.prisma.admin.findUnique({ where: { id } });
+    if (!existing) return null;
+    return mapAdmin(await this.prisma.admin.update({ where: { id }, data: { passkeyChallenge: challenge, passkeyChallengeExpiresAt: expiresAt } }));
+  }
+
+  async listAdminPasskeys(adminId: string): Promise<AdminPasskeyRecord[]> {
+    return (await this.prisma.adminPasskey.findMany({ where: { adminId }, orderBy: { createdAt: "desc" } })).map(mapPasskey);
+  }
+
+  async findAdminPasskeyByCredentialId(credentialId: string): Promise<AdminPasskeyRecord | null> {
+    const value = await this.prisma.adminPasskey.findUnique({ where: { credentialId }, include: { admin: true } });
+    return value ? mapPasskey(value) : null;
+  }
+
+  async createAdminPasskey(input: Omit<AdminPasskeyRecord, "id" | "createdAt" | "lastUsedAt" | "admin">): Promise<AdminPasskeyRecord> {
+    return mapPasskey(await this.prisma.adminPasskey.create({ data: { ...input, publicKey: Buffer.from(input.publicKey) } as any }));
+  }
+
+  async updateAdminPasskeyCounter(id: string, counter: bigint): Promise<void> {
+    await this.prisma.adminPasskey.update({ where: { id }, data: { counter, lastUsedAt: new Date() } });
+  }
+
+  async deleteAdminPasskey(id: string, adminId: string): Promise<boolean> {
+    const result = await this.prisma.adminPasskey.deleteMany({ where: { id, adminId } });
+    return result.count > 0;
   }
 
   async refreshAdminSession(tokenHash: string, presence: AdminSessionPresence): Promise<AdminSessionRecord | null> {
@@ -1028,5 +1171,78 @@ export class PrismaStore implements AppStore {
 
   async createNotificationLog(input: { eventType: string; destination: string; status: "sent" | "failed" | "skipped"; error?: string }): Promise<void> {
     await this.prisma.notificationLog.create({ data: input as any });
+  }
+
+  async healthCheck(): Promise<void> {
+    await this.prisma.$queryRaw`SELECT 1`;
+  }
+
+  async createBackup(): Promise<Record<string, unknown>> {
+    const [profiles, orders, participants, penalties, appeals, reviews, tickets, messages, notifications, auditLogs] = await this.prisma.$transaction([
+      this.prisma.escortPlayerProfile.findMany(),
+      this.prisma.escortOrder.findMany(),
+      this.prisma.escortParticipant.findMany(),
+      this.prisma.escortPenalty.findMany(),
+      this.prisma.penaltyAppeal.findMany(),
+      this.prisma.review.findMany(),
+      this.prisma.supportTicket.findMany(),
+      this.prisma.supportMessage.findMany(),
+      this.prisma.notificationLog.findMany(),
+      this.prisma.auditLog.findMany(),
+    ]);
+    const safe = (value: unknown): unknown => {
+      if (typeof value === "bigint") return value.toString();
+      if (value instanceof Date) return value.toISOString();
+      if (Array.isArray(value)) return value.map(safe);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, safe(item)]));
+      return value;
+    };
+    return safe({ version: 1, createdAt: new Date(), tables: { profiles, orders, participants, penalties, appeals, reviews, tickets, messages, notifications, auditLogs } }) as Record<string, unknown>;
+  }
+
+  async restoreBackup(data: unknown): Promise<Record<string, number>> {
+    const input = data as any;
+    if (input?.version !== 1 || !input.tables || typeof input.tables !== "object") throw new Error("Непідтримуваний формат резервної копії");
+    const tables = input.tables;
+    const arrays = ["profiles", "orders", "participants", "penalties", "appeals", "reviews", "tickets", "messages", "notifications", "auditLogs"];
+    if (!arrays.every((key) => Array.isArray(tables[key]))) throw new Error("Резервна копія пошкоджена");
+    const revive = (items: any[], dates: string[], bigints: string[] = []) => items.map((item) => ({
+      ...item,
+      ...Object.fromEntries(dates.filter((key) => item[key] != null).map((key) => [key, new Date(item[key])])),
+      ...Object.fromEntries(bigints.filter((key) => item[key] != null).map((key) => [key, BigInt(item[key])])),
+    }));
+    const profiles = revive(tables.profiles, ["suspendedUntil", "bannedAt", "createdAt", "updatedAt"]);
+    const orders = revive(tables.orders, ["reviewCodeIssuedAt", "reviewCodeConsumedAt", "orderDate", "createdAt", "updatedAt"], ["originalAmountMinor", "exchangeRateMicros", "amountUahMinor", "developerAmountMinor", "directorAmountMinor", "creatorAmountMinor", "escortPoolMinor"]);
+    const participants = revive(tables.participants, ["paidAt", "replacedAt", "excludedAt", "createdAt"], ["shareUahMinor"]);
+    const penalties = revive(tables.penalties, ["violationDate", "createdAt"], ["amountUahMinor"]);
+    const appeals = revive(tables.appeals, ["createdAt", "reviewedAt"]);
+    const reviews = revive(tables.reviews, ["createdAt", "moderatedAt"]);
+    const tickets = revive(tables.tickets, ["createdAt", "updatedAt"]);
+    const messages = revive(tables.messages, ["createdAt"]);
+    const notifications = revive(tables.notifications, ["createdAt"]);
+    const auditLogs = revive(tables.auditLogs, ["createdAt"]);
+    await this.prisma.$transaction(async (database: any) => {
+      await database.penaltyAppeal.deleteMany();
+      await database.escortPenalty.deleteMany();
+      await database.review.deleteMany();
+      await database.escortParticipant.deleteMany();
+      await database.escortOrder.deleteMany();
+      await database.escortPlayerProfile.deleteMany();
+      await database.supportMessage.deleteMany();
+      await database.supportTicket.deleteMany();
+      await database.notificationLog.deleteMany();
+      await database.auditLog.deleteMany();
+      if (profiles.length) await database.escortPlayerProfile.createMany({ data: profiles });
+      if (orders.length) await database.escortOrder.createMany({ data: orders });
+      if (participants.length) await database.escortParticipant.createMany({ data: participants });
+      if (penalties.length) await database.escortPenalty.createMany({ data: penalties });
+      if (appeals.length) await database.penaltyAppeal.createMany({ data: appeals });
+      if (reviews.length) await database.review.createMany({ data: reviews });
+      if (tickets.length) await database.supportTicket.createMany({ data: tickets });
+      if (messages.length) await database.supportMessage.createMany({ data: messages });
+      if (notifications.length) await database.notificationLog.createMany({ data: notifications });
+      if (auditLogs.length) await database.auditLog.createMany({ data: auditLogs });
+    });
+    return Object.fromEntries(arrays.map((key) => [key, tables[key].length]));
   }
 }

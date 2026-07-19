@@ -94,6 +94,34 @@
     return box;
   }
 
+  function decodeBase64url(value) {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=").slice(0));
+    return Uint8Array.from(bytes, (character) => character.charCodeAt(0)).buffer;
+  }
+
+  function encodeBase64url(value) {
+    const bytes = new Uint8Array(value || new ArrayBuffer(0));
+    let binary = ""; bytes.forEach((item) => { binary += String.fromCharCode(item); });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  function registrationOptions(options) {
+    return { ...options, challenge: decodeBase64url(options.challenge), user: { ...options.user, id: decodeBase64url(options.user.id) }, excludeCredentials: (options.excludeCredentials || []).map((item) => ({ ...item, id: decodeBase64url(item.id) })) };
+  }
+
+  function authenticationOptions(options) {
+    return { ...options, challenge: decodeBase64url(options.challenge), allowCredentials: (options.allowCredentials || []).map((item) => ({ ...item, id: decodeBase64url(item.id) })) };
+  }
+
+  function credentialJson(credential) {
+    const response = credential.response;
+    const value = { id: credential.id, rawId: encodeBase64url(credential.rawId), type: credential.type, authenticatorAttachment: credential.authenticatorAttachment, clientExtensionResults: credential.getClientExtensionResults(), response: { clientDataJSON: encodeBase64url(response.clientDataJSON) } };
+    if (response.attestationObject) { value.response.attestationObject = encodeBase64url(response.attestationObject); value.response.transports = response.getTransports ? response.getTransports() : []; }
+    if (response.authenticatorData) { value.response.authenticatorData = encodeBase64url(response.authenticatorData); value.response.signature = encodeBase64url(response.signature); value.response.userHandle = response.userHandle ? encodeBase64url(response.userHandle) : undefined; }
+    return value;
+  }
+
   function canWrite() {
     return accessMode === "operator";
   }
@@ -208,9 +236,11 @@
     button.addEventListener("click", () => {
       activateTab(button.dataset.adminTab);
       if (button.dataset.adminTab === "completed") void loadCompletedEscorts();
+      if (button.dataset.adminTab === "calendar") void loadCalendar();
       if (button.dataset.adminTab === "archive") void loadArchivedEscorts();
       if (button.dataset.adminTab === "players") void loadPlayerProfiles();
       if (button.dataset.adminTab === "penalties") void loadPenalties();
+      if (button.dataset.adminTab === "appeals") void loadAppeals();
       if (button.dataset.adminTab === "payments") void loadPayments();
       if (button.dataset.adminTab === "reports") void loadFinancialReport();
       if (button.dataset.adminTab === "analytics") void loadAnalytics();
@@ -473,7 +503,12 @@
       });
       checkbox.addEventListener("change", async () => {
         checkbox.disabled = true;
-        try { await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}`, { method: "PATCH", body: JSON.stringify({ paid: checkbox.checked }) }); await loadEscortOrders(); }
+        try {
+          const method = checkbox.checked ? (window.prompt("Способ выплаты (карта, криптовалюта, наличные)", "Карта") || "") : "";
+          const note = checkbox.checked ? (window.prompt("Комментарий к выплате (необязательно)", "") || "") : "";
+          await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}`, { method: "PATCH", body: JSON.stringify({ paid: checkbox.checked, method, note }) });
+          await Promise.all([loadEscortOrders(), loadPayments(), loadPlayerProfiles()]);
+        }
         catch (error) { checkbox.checked = !checkbox.checked; checkbox.disabled = !canWrite() || Boolean(player.replacedAt); globalStatus.textContent = error.message; }
       });
       top.append(person, assignment, label);
@@ -772,10 +807,21 @@
     status.textContent = profile.permanentlyBanned ? "Постоянный бан" : profile.suspendedUntil && new Date(profile.suspendedUntil) > new Date()
       ? `Отстранён до ${new Date(profile.suspendedUntil).toLocaleString("ru-RU")}` : "Допущен к сопровождениям";
     const figures = document.createElement("div"); figures.className = "profile-card__figures";
-    [["Заказов", profile.orderCount], ["Нарушений", profile.penaltyCount], ["Начислено", money(profile.earnedUah)], ["Удержано", money(profile.withheldUah)]].forEach(([label, value]) => {
+    [["Заказов", profile.orderCount], ["Нарушений", profile.penaltyCount], ["Начислено", money(profile.earnedUah)], ["Удержано", money(profile.withheldUah)], ["Выплачено", money(profile.paidUah)], ["Баланс", money(profile.balanceUah)]].forEach(([label, value]) => {
       const item = document.createElement("span"); item.innerHTML = `<small>${label}</small><b>${value}</b>`; figures.append(item);
     });
     card.append(title, meta, status, figures);
+    if (canWrite()) {
+      const access = document.createElement("button"); access.type = "button"; access.textContent = "Выдать код кабинета"; writeControl(access);
+      access.addEventListener("click", async () => {
+        access.disabled = true;
+        try {
+          const result = await api(`/api/admin/player-profiles/${profile.id}/portal-code`, { method: "POST", body: "{}" });
+          window.alert(`Код кабинета для PUBG ID ${result.gameId}: ${result.code}\nПередайте код только этому игроку.`);
+        } catch (error) { globalStatus.textContent = error.message; access.disabled = false; }
+      });
+      card.append(access);
+    }
     return card;
   }
 
@@ -853,6 +899,43 @@
     }
   }
 
+  async function loadAppeals() {
+    const container = document.querySelector("#penaltyAppeals");
+    if (!container) return;
+    const status = document.querySelector("#appealFilter").value;
+    container.replaceChildren(empty("Загрузка…", "Получаем оспаривания штрафов"));
+    try {
+      const result = await api(`/api/admin/penalty-appeals?status=${encodeURIComponent(status)}`, { method: "GET" });
+      container.replaceChildren();
+      if (!result.items.length) container.append(empty("Оспариваний нет", "Новые обращения игроков появятся здесь."));
+      result.items.forEach((appeal) => {
+        const card = document.createElement("article"); card.className = "penalty-management-card";
+        const content = document.createElement("div");
+        const title = document.createElement("h3"); title.textContent = `${appeal.playerName} • PUBG ID ${appeal.gameId}`;
+        const meta = document.createElement("p"); meta.textContent = `Штраф ${money(appeal.penaltyAmountUah)} • ${appeal.penaltyReason} • ${new Date(appeal.createdAt).toLocaleString("ru-RU")}`;
+        const message = document.createElement("strong"); message.textContent = appeal.message;
+        content.append(title, meta, message);
+        if (appeal.adminReply) { const reply = document.createElement("small"); reply.textContent = `Ответ: ${appeal.adminReply}`; content.append(reply); }
+        card.append(content);
+        if (appeal.status === "pending" && canWrite()) {
+          const controls = document.createElement("div");
+          [["approved", "Одобрить"], ["rejected", "Отклонить"]].forEach(([decision, label]) => {
+            const button = document.createElement("button"); button.type = "button"; button.textContent = label; writeControl(button);
+            button.addEventListener("click", async () => {
+              const adminReply = window.prompt("Ответ игроку", decision === "approved" ? "Оспаривание принято. Администратор проверит снятие штрафа." : "Штраф оставлен в силе.") || "";
+              if (!adminReply) return;
+              await api(`/api/admin/penalty-appeals/${appeal.id}`, { method: "PATCH", body: JSON.stringify({ status: decision, adminReply }) });
+              await loadAppeals();
+            });
+            controls.append(button);
+          });
+          card.append(controls);
+        }
+        container.append(card);
+      });
+    } catch (error) { container.replaceChildren(empty("Ошибка загрузки", error.message)); }
+  }
+
   function reportDates() {
     const today = new Date().toISOString().slice(0, 10);
     const month = `${today.slice(0, 8)}01`;
@@ -880,7 +963,7 @@
   async function downloadFinancialReport() {
     const { from, to } = reportDates();
     try {
-      const response = await fetch(endpoint(`/api/admin/reports/financial.csv?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`), { credentials: "include" });
+      const response = await fetch(endpoint(`/api/admin/reports/financial.csv?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`), { credentials: "include", headers: adminAuthToken ? { authorization: `Bearer ${adminAuthToken}` } : {} });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "Не удалось скачать отчёт");
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a"); link.href = url; link.download = `financial-${from}-${to}.csv`; link.click(); URL.revokeObjectURL(url);
@@ -898,28 +981,22 @@
 
   async function downloadBackup() {
     try {
-      const { from, to } = reportDates();
-      const [planned, completed, paid, cancelled, profiles, penalties, audit, report] = await Promise.all([
-        api("/api/admin/escort-orders?status=planned&page=1&pageSize=50", { method: "GET" }),
-        api("/api/admin/escort-orders?status=completed&page=1&pageSize=50", { method: "GET" }),
-        api("/api/admin/escort-orders?status=paid&page=1&pageSize=50", { method: "GET" }),
-        api("/api/admin/escort-orders?status=cancelled&page=1&pageSize=50", { method: "GET" }),
-        api("/api/admin/player-profiles?page=1&pageSize=100", { method: "GET" }),
-        api("/api/admin/penalties?page=1&pageSize=100", { method: "GET" }),
-        api("/api/admin/audit-logs?page=1&pageSize=100", { method: "GET" }),
-        api(`/api/admin/reports/financial?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { method: "GET" }),
-      ]);
-      const snapshot = {
-        exportedAt: new Date().toISOString(),
-        period: { from, to },
-        report,
-        orders: [...planned.items, ...completed.items, ...paid.items, ...cancelled.items],
-        profiles: profiles.items,
-        penalties: penalties.items,
-        audit: audit.items,
-      };
-      saveDownload(new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" }), `undying-metro-backup-${new Date().toISOString().slice(0, 10)}.json`);
+      const response = await fetch(endpoint("/api/admin/backups/latest"), { credentials: "include", headers: adminAuthToken ? { authorization: `Bearer ${adminAuthToken}` } : {} });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "Не удалось создать резервную копию");
+      saveDownload(await response.blob(), `undying-metro-backup-${new Date().toISOString().slice(0, 10)}.json`);
       globalStatus.textContent = "Резервная копия подготовлена";
+    } catch (error) { globalStatus.textContent = error.message; }
+  }
+
+  async function restoreBackup(file) {
+    if (currentRole !== "owner") { globalStatus.textContent = "Восстановление доступно только владельцу"; return; }
+    const confirmation = window.prompt("ВНИМАНИЕ: текущие операционные данные будут заменены. Введите RESTORE");
+    if (confirmation !== "RESTORE") return;
+    try {
+      const backup = JSON.parse(await file.text());
+      await api("/api/admin/backups/restore", { method: "POST", body: JSON.stringify({ confirmation, backup }) });
+      globalStatus.textContent = "Резервная копия восстановлена";
+      await refreshAll();
     } catch (error) { globalStatus.textContent = error.message; }
   }
 
@@ -937,7 +1014,7 @@
         const title = document.createElement("strong");
         title.textContent = event.details?.paid ? `Выплата: ${event.details?.participantName || "игрок"}` : `Выплата отменена: ${event.details?.participantName || "игрок"}`;
         const meta = document.createElement("p");
-        meta.textContent = `${event.details?.payoutUah ? money(event.details.payoutUah) : ""} • ${event.adminUsername || "Система"} • ${new Date(event.createdAt).toLocaleString("ru-RU")}`;
+        meta.textContent = `${event.details?.payoutUah ? money(event.details.payoutUah) : ""}${event.details?.method ? ` • ${event.details.method}` : ""}${event.details?.note ? ` • ${event.details.note}` : ""} • ${event.adminUsername || "Система"} • ${new Date(event.createdAt).toLocaleString("ru-RU")}`;
         card.append(title, meta);
         if (canWrite() && event.details?.paid && event.details?.orderId && event.entityId) {
           const reverse = document.createElement("button"); reverse.type = "button"; reverse.textContent = "Отменить выплату"; writeControl(reverse);
@@ -953,6 +1030,39 @@
         container.append(card);
       });
     } catch (error) { container.replaceChildren(empty("Ошибка загрузки", error.message)); }
+  }
+
+  async function loadCalendar() {
+    const container = document.querySelector("#escortCalendar");
+    if (!container) return;
+    const fromInput = document.querySelector("#calendarFrom");
+    const toInput = document.querySelector("#calendarTo");
+    const today = new Date().toISOString().slice(0, 10);
+    if (!fromInput.value) fromInput.value = `${today.slice(0, 8)}01`;
+    if (!toInput.value) toInput.value = new Date(Date.now() + 31 * 86400000).toISOString().slice(0, 10);
+    container.replaceChildren(empty("Загрузка…", "Получаем календарь сопровождений"));
+    try {
+      const [active, cancelled] = await Promise.all([
+        api("/api/admin/escort-orders?page=1&pageSize=50", { method: "GET" }),
+        api("/api/admin/escort-orders?status=cancelled&page=1&pageSize=50", { method: "GET" }),
+      ]);
+      const orders = [...active.items, ...cancelled.items]
+        .filter((order) => order.orderDate.slice(0, 10) >= fromInput.value && order.orderDate.slice(0, 10) <= toInput.value)
+        .sort((left, right) => left.orderDate.localeCompare(right.orderDate));
+      container.replaceChildren();
+      if (!orders.length) container.append(empty("Заказов нет", "Измените период календаря"));
+      let previousDate = "";
+      orders.forEach((order) => {
+        const date = order.orderDate.slice(0, 10);
+        if (date !== previousDate) {
+          const heading = document.createElement("h3"); heading.textContent = new Date(`${date}T12:00:00`).toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" }); container.append(heading); previousDate = date;
+        }
+        const card = document.createElement("article"); card.className = "audit-card";
+        const title = document.createElement("strong"); title.textContent = `${order.item} — ${order.buyerName}`;
+        const meta = document.createElement("p"); meta.textContent = `${escortStatuses[order.status] || order.status} • ${order.participants.filter((item) => !item.replacedAt).map((item) => `${item.name} (${item.assignmentStatus})`).join(", ")}`;
+        card.append(title, meta); container.append(card);
+      });
+    } catch (error) { container.replaceChildren(empty("Ошибка календаря", error.message)); }
   }
 
   async function loadAnalytics() {
@@ -1052,7 +1162,7 @@
   async function refreshAll() {
     globalStatus.textContent = "";
     await refreshDashboard();
-    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadArchivedEscorts(), loadPlayerProfiles(), loadPenalties(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
+      await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadArchivedEscorts(), loadPlayerProfiles(), loadPenalties(), loadAppeals(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
     if (activeTicketId) await loadTicketDetail(activeTicketId);
   }
 
@@ -1073,7 +1183,9 @@
     }
     if (activeTab === "archive") { await loadArchivedEscorts(); return; }
     if (activeTab === "players") { await loadPlayerProfiles(); return; }
+    if (activeTab === "calendar") { await loadCalendar(); return; }
     if (activeTab === "penalties") { await loadPenalties(); return; }
+    if (activeTab === "appeals") { await loadAppeals(); return; }
     if (activeTab === "payments") { await loadPayments(); return; }
     if (activeTab === "reports") { await loadFinancialReport(); return; }
     if (activeTab === "analytics") { await loadAnalytics(); return; }
@@ -1109,9 +1221,14 @@
 
   document.querySelector("#refreshButton").addEventListener("click", () => void refreshAll());
   document.querySelector("#playerSearch").addEventListener("input", () => void loadPlayerProfiles());
+  document.querySelector("#calendarFrom").addEventListener("change", () => void loadCalendar());
+  document.querySelector("#calendarTo").addEventListener("change", () => void loadCalendar());
   document.querySelector("#penaltySearch").addEventListener("input", () => void loadPenalties());
+  document.querySelector("#appealFilter").addEventListener("change", () => void loadAppeals());
   document.querySelector("#loadReport").addEventListener("click", () => void loadFinancialReport());
   document.querySelector("#downloadReport").addEventListener("click", () => void downloadFinancialReport());
+  document.querySelector("#restoreBackup").addEventListener("click", () => document.querySelector("#restoreBackupFile").click());
+  document.querySelector("#restoreBackupFile").addEventListener("change", (event) => { const [file] = event.target.files; if (file) void restoreBackup(file); event.target.value = ""; });
   document.querySelector("#downloadBackup").addEventListener("click", () => void downloadBackup());
   document.querySelector("#accountForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1124,6 +1241,32 @@
       await loadAccounts();
     } catch (error) { globalStatus.textContent = error.message; }
     finally { busy(form, false); }
+  });
+
+  document.querySelector("#passkeyLoginButton").addEventListener("click", async () => {
+    const username = loginForm.elements.username.value.trim().toLowerCase();
+    if (!username) { document.querySelector("#loginStatus").textContent = "Сначала введите логин"; loginForm.elements.username.focus(); return; }
+    if (!window.PublicKeyCredential) { document.querySelector("#loginStatus").textContent = "Этот браузер не поддерживает Passkey"; return; }
+    try {
+      const options = await api("/api/admin/passkeys/authentication-options", { method: "POST", body: JSON.stringify({ username }) });
+      const credential = await navigator.credentials.get({ publicKey: authenticationOptions(options) });
+      const result = await api("/api/admin/passkeys/authenticate", { method: "POST", body: JSON.stringify({ username, response: credentialJson(credential) }) });
+      csrfToken = result.csrfToken; adminAuthToken = result.sessionToken || "";
+      storageSet("sessionStorage", "undying_admin_csrf", csrfToken); if (adminAuthToken) storageSet("localStorage", "undying_admin_token", adminAuthToken);
+      await bootstrap(true);
+    } catch (error) { document.querySelector("#loginStatus").textContent = error.name === "NotAllowedError" ? "Вход Face ID отменён" : error.message; }
+  });
+
+  document.querySelector("#registerPasskeyButton").addEventListener("click", async () => {
+    if (!window.PublicKeyCredential) { globalStatus.textContent = "Этот браузер не поддерживает Passkey"; return; }
+    const button = document.querySelector("#registerPasskeyButton"); button.disabled = true;
+    try {
+      const options = await api("/api/admin/passkeys/registration-options", { method: "POST", body: "{}" });
+      const credential = await navigator.credentials.create({ publicKey: registrationOptions(options) });
+      await api("/api/admin/passkeys/register", { method: "POST", body: JSON.stringify({ response: credentialJson(credential) }) });
+      globalStatus.textContent = "Face ID / Passkey добавлен. Теперь вход возможен без пароля.";
+    } catch (error) { globalStatus.textContent = error.name === "NotAllowedError" ? "Добавление Face ID отменено" : error.message; }
+    finally { button.disabled = false; }
   });
   window.setInterval(async () => {
     if (adminApp.hidden || heartbeatRunning) return;

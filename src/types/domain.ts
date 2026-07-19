@@ -16,6 +16,7 @@ export type ExchangeRateSource = "uah" | "nbu" | "manual";
 export type AdminAccessMode = "operator" | "observer";
 export type AdminRole = "owner" | "director" | "admin" | "observer";
 export type EscortAssignmentStatus = "invited" | "accepted" | "declined";
+export type PenaltyAppealStatus = "pending" | "approved" | "rejected";
 
 export interface AdminRecord {
   id: string;
@@ -26,6 +27,8 @@ export interface AdminRecord {
   twoFactorSecret: string | null;
   twoFactorEnabled: boolean;
   createdAt: Date;
+  passkeyChallenge?: string | null;
+  passkeyChallengeExpiresAt?: Date | null;
 }
 
 export interface AdminSessionRecord {
@@ -180,6 +183,40 @@ export interface EscortPlayerProfileRecord {
   penaltyCount?: number;
   earnedUahMinor?: bigint;
   withheldUahMinor?: bigint;
+  paidUahMinor?: bigint;
+  balanceUahMinor?: bigint;
+  portalCodeHash?: string | null;
+}
+
+export interface PenaltyAppealRecord {
+  id: string;
+  penaltyId: string;
+  playerProfileId: string;
+  playerName: string;
+  gameId: string;
+  penaltyReason: string;
+  penaltyAmountUahMinor: bigint;
+  message: string;
+  status: PenaltyAppealStatus;
+  adminReply: string | null;
+  reviewedById: string | null;
+  reviewedByUsername: string | null;
+  createdAt: Date;
+  reviewedAt: Date | null;
+}
+
+export interface AdminPasskeyRecord {
+  id: string;
+  adminId: string;
+  credentialId: string;
+  publicKey: Uint8Array;
+  counter: bigint;
+  transports: string[];
+  deviceType: string;
+  backedUp: boolean;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  admin?: AdminRecord;
 }
 
 export interface AuditLogRecord {

@@ -82,6 +82,12 @@ enum EscortAssignmentStatus {
   declined
 }
 
+enum PenaltyAppealStatus {
+  pending
+  approved
+  rejected
+}
+
 model Admin {
   id              String           @id @default(uuid())
   username        String           @unique @db.VarChar(64)
@@ -99,6 +105,10 @@ model Admin {
   escortOrders    EscortOrder[]    @relation("EscortOrderCreator")
   escortPenalties EscortPenalty[]  @relation("EscortPenaltyAdmin")
   auditLogs       AuditLog[]       @relation("AuditLogAdmin")
+  reviewedAppeals PenaltyAppeal[]   @relation("PenaltyAppealReviewer")
+  passkeys        AdminPasskey[]
+  passkeyChallenge String?         @map("passkey_challenge") @db.VarChar(512)
+  passkeyChallengeExpiresAt DateTime? @map("passkey_challenge_expires_at")
 
   @@map("admins")
 }
@@ -176,6 +186,7 @@ model EscortPenalty {
   participant     EscortParticipant    @relation(fields: [participantId], references: [id], onDelete: Cascade)
   playerProfile   EscortPlayerProfile? @relation(fields: [playerProfileId], references: [id], onDelete: SetNull)
   createdBy       Admin                @relation("EscortPenaltyAdmin", fields: [createdById], references: [id], onDelete: Restrict)
+  appeals         PenaltyAppeal[]
 
   @@unique([playerProfileId, violationDate, sequence])
   @@index([participantId, sequence])
@@ -192,13 +203,51 @@ model EscortPlayerProfile {
   suspendedUntil    DateTime?           @map("suspended_until")
   permanentlyBanned Boolean             @default(false) @map("permanently_banned")
   bannedAt          DateTime?           @map("banned_at")
+  portalCodeHash    String?             @map("portal_code_hash") @db.VarChar(64)
   createdAt         DateTime            @default(now()) @map("created_at")
   updatedAt         DateTime            @updatedAt @map("updated_at")
   participants      EscortParticipant[]
   penalties         EscortPenalty[]
+  appeals           PenaltyAppeal[]
 
   @@index([permanentlyBanned, suspendedUntil])
   @@map("escort_player_profiles")
+}
+
+model PenaltyAppeal {
+  id              String              @id @default(uuid())
+  penaltyId       String              @map("penalty_id")
+  playerProfileId String              @map("player_profile_id")
+  message         String              @db.VarChar(1200)
+  status          PenaltyAppealStatus @default(pending)
+  adminReply      String?             @map("admin_reply") @db.VarChar(1200)
+  reviewedById    String?             @map("reviewed_by_id")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  reviewedAt      DateTime?           @map("reviewed_at")
+  penalty         EscortPenalty       @relation(fields: [penaltyId], references: [id], onDelete: Cascade)
+  playerProfile   EscortPlayerProfile @relation(fields: [playerProfileId], references: [id], onDelete: Cascade)
+  reviewedBy      Admin?              @relation("PenaltyAppealReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([playerProfileId, createdAt])
+  @@map("penalty_appeals")
+}
+
+model AdminPasskey {
+  id           String   @id @default(uuid())
+  adminId      String   @map("admin_id")
+  credentialId String   @unique @map("credential_id") @db.VarChar(512)
+  publicKey    Bytes    @map("public_key")
+  counter      BigInt   @default(0)
+  transports   String[] @default([])
+  deviceType   String   @default("singleDevice") @map("device_type") @db.VarChar(32)
+  backedUp     Boolean  @default(false) @map("backed_up")
+  createdAt    DateTime @default(now()) @map("created_at")
+  lastUsedAt   DateTime? @map("last_used_at")
+  admin        Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@map("admin_passkeys")
 }
 
 model AdminSession {

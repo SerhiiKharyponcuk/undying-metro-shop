@@ -20,6 +20,9 @@ import type {
   SupportMessageRecord,
   SupportTicketRecord,
   TicketStatus,
+  PenaltyAppealRecord,
+  PenaltyAppealStatus,
+  AdminPasskeyRecord,
 } from "../src/types/domain.js";
 import { calculatePenaltyAmount } from "../src/lib/escort-calculation.js";
 
@@ -33,6 +36,8 @@ export class MemoryStore implements AppStore {
   auditLogs: AuditLogRecord[] = [];
   notifications: Array<{ eventType: string; destination: string; status: NotificationState; error?: string }> = [];
   managerAvailability = new Map<string, Date>();
+  appeals: PenaltyAppealRecord[] = [];
+  passkeys: AdminPasskeyRecord[] = [];
 
   async getManagerAvailability(managerKeys: string[]): Promise<ManagerAvailabilityRecord[]> {
     return managerKeys.flatMap((managerKey) => {
@@ -368,6 +373,47 @@ export class MemoryStore implements AppStore {
     return profile ? this.enrichProfile(profile) : null;
   }
 
+  async findEscortPlayerProfileByGameId(gameId: string): Promise<EscortPlayerProfileRecord | null> {
+    const profile = this.playerProfiles.find((item) => item.gameId === gameId);
+    return profile ? this.enrichProfile(profile) : null;
+  }
+
+  async listEscortOrdersByPlayerProfile(playerProfileId: string): Promise<EscortOrderRecord[]> {
+    return this.escortOrders.filter((order) => order.participants.some((item) => item.playerProfileId === playerProfileId));
+  }
+
+  async rotateEscortPortalCode(id: string, portalCodeHash: string): Promise<EscortPlayerProfileRecord | null> {
+    const profile = this.playerProfiles.find((item) => item.id === id);
+    if (!profile) return null;
+    profile.portalCodeHash = portalCodeHash;
+    return this.enrichProfile(profile);
+  }
+
+  async findBuyerOrder(gameId: string, reviewCodeHash: string): Promise<EscortOrderRecord | null> {
+    return this.escortOrders.find((item) => item.buyerGameId === gameId && item.reviewCodeHash === reviewCodeHash) ?? null;
+  }
+
+  async createPenaltyAppeal(penaltyId: string, playerProfileId: string, message: string): Promise<PenaltyAppealRecord | null> {
+    const profile = this.playerProfiles.find((item) => item.id === playerProfileId);
+    const penalty = this.escortOrders.flatMap((order) => order.participants).flatMap((item) => item.penalties).find((item) => item.id === penaltyId && item.playerProfileId === playerProfileId);
+    if (!profile || !penalty) return null;
+    if (this.appeals.some((item) => item.penaltyId === penaltyId && item.status === "pending")) throw new Error("Оскарження цього штрафу вже очікує розгляду");
+    const appeal: PenaltyAppealRecord = { id: randomUUID(), penaltyId, playerProfileId, playerName: profile.displayName, gameId: profile.gameId, penaltyReason: penalty.reason, penaltyAmountUahMinor: penalty.amountUahMinor, message, status: "pending", adminReply: null, reviewedById: null, reviewedByUsername: null, createdAt: new Date(), reviewedAt: null };
+    this.appeals.push(appeal);
+    return appeal;
+  }
+
+  async listPenaltyAppeals(status?: PenaltyAppealStatus): Promise<PenaltyAppealRecord[]> {
+    return this.appeals.filter((item) => !status || item.status === status);
+  }
+
+  async updatePenaltyAppeal(id: string, input: { status: PenaltyAppealStatus; adminReply: string | null; reviewedById: string }): Promise<PenaltyAppealRecord | null> {
+    const appeal = this.appeals.find((item) => item.id === id);
+    if (!appeal) return null;
+    Object.assign(appeal, input, { reviewedByUsername: this.admins.find((item) => item.id === input.reviewedById)?.username ?? null, reviewedAt: new Date() });
+    return appeal;
+  }
+
   async rotateEscortReviewCode(id: string, reviewCodeHash: string, issuedAt: Date): Promise<EscortOrderRecord | null> {
     const order = this.escortOrders.find((item) => item.id === id);
     if (!order) return null;
@@ -526,6 +572,23 @@ export class MemoryStore implements AppStore {
     return admin;
   }
 
+  async setAdminPasskeyChallenge(id: string, challenge: string | null, expiresAt: Date | null): Promise<AdminRecord | null> {
+    const admin = this.admins.find((item) => item.id === id);
+    if (!admin) return null;
+    admin.passkeyChallenge = challenge;
+    admin.passkeyChallengeExpiresAt = expiresAt;
+    return admin;
+  }
+
+  async listAdminPasskeys(adminId: string): Promise<AdminPasskeyRecord[]> { return this.passkeys.filter((item) => item.adminId === adminId); }
+  async findAdminPasskeyByCredentialId(credentialId: string): Promise<AdminPasskeyRecord | null> { return this.passkeys.find((item) => item.credentialId === credentialId) ?? null; }
+  async createAdminPasskey(input: Omit<AdminPasskeyRecord, "id" | "createdAt" | "lastUsedAt" | "admin">): Promise<AdminPasskeyRecord> {
+    const value: AdminPasskeyRecord = { ...input, id: randomUUID(), createdAt: new Date(), lastUsedAt: null, admin: this.admins.find((item) => item.id === input.adminId) };
+    this.passkeys.push(value); return value;
+  }
+  async updateAdminPasskeyCounter(id: string, counter: bigint): Promise<void> { const item = this.passkeys.find((value) => value.id === id); if (item) { item.counter = counter; item.lastUsedAt = new Date(); } }
+  async deleteAdminPasskey(id: string, adminId: string): Promise<boolean> { const before = this.passkeys.length; this.passkeys = this.passkeys.filter((item) => item.id !== id || item.adminId !== adminId); return before !== this.passkeys.length; }
+
   private reconcileAdminAccess(presence: AdminSessionPresence): void {
     for (const session of this.sessions) {
       if (
@@ -635,15 +698,53 @@ export class MemoryStore implements AppStore {
     return { items: ordered.slice((page - 1) * pageSize, page * pageSize), total: ordered.length, page, pageSize };
   }
 
+  async healthCheck(): Promise<void> {}
+
+  async createBackup(): Promise<Record<string, unknown>> {
+    const safe = (value: unknown): unknown => {
+      if (typeof value === "bigint") return value.toString();
+      if (value instanceof Date) return value.toISOString();
+      if (Array.isArray(value)) return value.map(safe);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, safe(item)]));
+      return value;
+    };
+    return safe({ version: 1, createdAt: new Date(), tables: { orders: this.escortOrders, profiles: this.playerProfiles, reviews: this.reviews, tickets: this.tickets, appeals: this.appeals, auditLogs: this.auditLogs, participants: [], penalties: [], messages: [], notifications: this.notifications } }) as Record<string, unknown>;
+  }
+
+  async restoreBackup(data: unknown): Promise<Record<string, number>> {
+    const input = data as any;
+    if (input?.version !== 1 || !input.tables) throw new Error("Непідтримуваний формат резервної копії");
+    const bigintKeys = new Set(["originalAmountMinor", "exchangeRateMicros", "amountUahMinor", "developerAmountMinor", "directorAmountMinor", "creatorAmountMinor", "escortPoolMinor", "shareUahMinor", "penaltyAmountUahMinor"]);
+    const dateKeys = new Set(["orderDate", "createdAt", "updatedAt", "paidAt", "replacedAt", "excludedAt", "violationDate", "suspendedUntil", "bannedAt", "reviewCodeIssuedAt", "reviewCodeConsumedAt", "moderatedAt", "reviewedAt"]);
+    const revive = (value: any, key = ""): any => {
+      if (value == null) return value;
+      if (typeof value === "string" && bigintKeys.has(key)) return BigInt(value);
+      if (typeof value === "string" && dateKeys.has(key)) return new Date(value);
+      if (Array.isArray(value)) return value.map((item) => revive(item));
+      if (typeof value === "object") return Object.fromEntries(Object.entries(value).map(([itemKey, item]) => [itemKey, revive(item, itemKey)]));
+      return value;
+    };
+    this.escortOrders = revive(input.tables.orders ?? []);
+    this.playerProfiles = revive(input.tables.profiles ?? []);
+    this.reviews = revive(input.tables.reviews ?? []);
+    this.tickets = revive(input.tables.tickets ?? []);
+    this.appeals = revive(input.tables.appeals ?? []);
+    this.auditLogs = revive(input.tables.auditLogs ?? []);
+    return Object.fromEntries(Object.entries(input.tables).map(([key, value]) => [key, Array.isArray(value) ? value.length : 0]));
+  }
+
   private enrichProfile(profile: EscortPlayerProfileRecord): EscortPlayerProfileRecord {
     const participants = this.escortOrders.flatMap((order) => order.participants).filter((item) => item.playerProfileId === profile.id);
     const penalties = participants.flatMap((item) => item.penalties);
+    const payout = (item: EscortOrderRecord["participants"][number]) => item.shareUahMinor - item.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
     return {
       ...profile,
       orderCount: participants.length,
       penaltyCount: penalties.length,
       earnedUahMinor: participants.reduce((sum, item) => sum + item.shareUahMinor, 0n),
       withheldUahMinor: penalties.reduce((sum, item) => sum + item.amountUahMinor, 0n),
+      paidUahMinor: participants.filter((item) => item.paid && !item.replacedAt).reduce((sum, item) => sum + payout(item), 0n),
+      balanceUahMinor: participants.filter((item) => !item.paid && !item.replacedAt).reduce((sum, item) => sum + payout(item), 0n),
     };
   }
 

@@ -39,6 +39,7 @@ export async function buildApp(input: {
     bodyLimit: 32 * 1024,
   });
   const notifier = typeof input.notifier === "function" ? input.notifier(app.log) : input.notifier ?? new NoopNotifier();
+  let monitoringTimer: NodeJS.Timeout | null = null;
 
   await app.register(cookie, { secret: config.cookieSecret, hook: "onRequest" });
   await app.register(cors, {
@@ -96,6 +97,15 @@ export async function buildApp(input: {
     const file = await staticFile("admin/styles.css", "text/css; charset=utf-8");
     return reply.type(file.contentType).header("cache-control", file.cacheControl).send(file.body);
   });
+  app.get("/portal", async (_request, reply) => reply.redirect("/portal.html"));
+  app.get("/portal.html", async (_request, reply) => {
+    const file = await staticFile("portal.html", "text/html; charset=utf-8", "no-cache");
+    return reply.type(file.contentType).header("cache-control", file.cacheControl).send(file.body);
+  });
+  app.get("/portal.js", async (_request, reply) => {
+    const file = await staticFile("portal.js", "text/javascript; charset=utf-8");
+    return reply.type(file.contentType).header("cache-control", file.cacheControl).send(file.body);
+  });
   app.get("/assets/undying-metro-avatar.webp", async (_request, reply) => {
     const file = await staticFile("assets/undying-metro-avatar.webp", "image/webp", "public, max-age=86400");
     return reply.type(file.contentType).header("cache-control", file.cacheControl).send(file.body);
@@ -111,6 +121,22 @@ export async function buildApp(input: {
 
   await registerPublicRoutes(app, { store, config, notifier });
   await registerAdminRoutes(app, { store, config, notifier });
+
+  if (config.nodeEnv === "production") {
+    let databaseHealthy = true;
+    monitoringTimer = setInterval(async () => {
+      try {
+        await store.healthCheck();
+        if (!databaseHealthy) await notifier.operation("monitoring_recovered", ["✅ База даних знову доступна"]);
+        databaseHealthy = true;
+      } catch {
+        if (databaseHealthy) await notifier.operation("monitoring_database_failed", ["🚨 База даних не відповідає", `Час: ${new Date().toISOString()}`]);
+        databaseHealthy = false;
+      }
+    }, 5 * 60 * 1000);
+    monitoringTimer.unref();
+  }
+  app.addHook("onClose", async () => { if (monitoringTimer) clearInterval(monitoringTimer); });
 
   return app;
 }

@@ -1,0 +1,31 @@
+name: Production uptime
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check production readiness
+        id: health
+        continue-on-error: true
+        run: curl --fail --silent --show-error --max-time 30 --retry 2 https://undying-metro-api.onrender.com/api/health/ready
+      - name: Notify Telegram on failure
+        if: steps.health.outcome == 'failure'
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+        run: |
+          if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
+            curl --fail --silent --show-error --max-time 20 \
+              --request POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              --header "content-type: application/json" \
+              --data "{\"chat_id\":\"${CHAT_ID}\",\"text\":\"🚨 Undying Metro API не відповідає: $(date -u +%FT%TZ)\"}"
+          fi
+      - name: Fail unhealthy check
+        if: steps.health.outcome == 'failure'
+        run: exit 1

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 
 const environmentSchema = z
   .object({
@@ -19,6 +20,7 @@ const environmentSchema = z
     TURNSTILE_SECRET_KEY: z.string().optional().default(""),
     TELEGRAM_BOT_TOKEN: z.string().optional().default(""),
     TELEGRAM_ADMIN_CHAT_IDS: z.string().optional().default(""),
+    TELEGRAM_WEBHOOK_SECRET: z.string().min(24).optional().or(z.literal("")).default(""),
     ADMIN_PANEL_URL: z.string().url().optional().or(z.literal("")).default(""),
   })
   .superRefine((environment, context) => {
@@ -54,6 +56,7 @@ export interface AppConfig {
   telegramBotToken: string;
   telegramAdminChatIds: string[];
   adminPanelUrl: string;
+  telegramWebhookSecret: string;
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -84,5 +87,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     telegramBotToken: value.TELEGRAM_BOT_TOKEN,
     telegramAdminChatIds: value.TELEGRAM_ADMIN_CHAT_IDS.split(",").map((id) => id.trim()).filter(Boolean),
     adminPanelUrl: value.ADMIN_PANEL_URL,
+    telegramWebhookSecret: value.TELEGRAM_WEBHOOK_SECRET || createHash("sha256").update(`telegram:${value.COOKIE_SECRET}`).digest("hex"),
   };
 }

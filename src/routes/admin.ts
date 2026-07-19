@@ -7,6 +7,7 @@ import type { AdminNotifier } from "../lib/telegram.js";
 import { cleanPlainText, constantTimeEqual, containsMarkup, hashSecret, keyedHash, randomCode, randomToken, sha256, verifySecret } from "../lib/security.js";
 import { generateTotpSecret, openTotpSecret, sealTotpSecret, verifyTotp } from "../lib/totp.js";
 import type { AppStore } from "../store/store.js";
+import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 
 const COOKIE_NAME = "undying_admin_session";
 const ADMIN_PRESENCE_WINDOW_MS = 60_000;
@@ -65,7 +66,11 @@ const escortOrderQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(50).default(30),
 });
 const escortStatusBody = z.object({ status: z.enum(["planned", "completed", "paid", "cancelled"]) });
-const participantPaidBody = z.object({ paid: z.boolean() });
+const participantPaidBody = z.object({
+  paid: z.boolean(),
+  method: z.union([plainText(2, 40), z.literal("")]).optional().default(""),
+  note: z.union([plainText(2, 160), z.literal("")]).optional().default(""),
+});
 const participantAssignmentBody = z.object({ status: z.enum(["invited", "accepted", "declined"]) });
 const penaltyDeleteBody = z.object({ clearPaid: z.boolean().optional().default(false) });
 const participantParams = z.object({ id: z.string().uuid(), participantId: z.string().uuid() });
@@ -94,6 +99,12 @@ const pageQuery = z.object({
 const profileQuery = pageQuery.extend({ query: z.string().trim().max(80).optional() });
 const penaltyQuery = pageQuery.extend({ query: z.string().trim().max(120).optional() });
 const reportQuery = z.object({ from: orderDateValue, to: orderDateValue });
+const appealQuery = z.object({ status: z.preprocess(optionalQueryValue, z.enum(["pending", "approved", "rejected"]).optional()) });
+const appealUpdateBody = z.object({ status: z.enum(["approved", "rejected"]), adminReply: z.union([plainText(2, 1200), z.literal("")]).optional().default("") });
+const passkeyUsernameBody = z.object({ username: z.string().trim().toLowerCase().min(3).max(64) });
+const passkeyResponseBody = z.object({ username: z.string().trim().toLowerCase().min(3).max(64), response: z.any() });
+const passkeyRegistrationBody = z.object({ response: z.any() });
+const backupRestoreBody = z.object({ confirmation: z.literal("RESTORE"), backup: z.any() });
 
 function orderDate(value: string): Date | null {
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -173,6 +184,12 @@ function serializeEscortOrder(order: any) {
   };
 }
 
+function webAuthnContext(request: FastifyRequest, config: AppConfig) {
+  const fallback = `${request.protocol}://${request.hostname}`;
+  const origin = config.adminPanelUrl ? new URL(config.adminPanelUrl).origin : fallback;
+  return { origin, rpID: new URL(origin).hostname };
+}
+
 function serializePlayerProfile(profile: any) {
   return {
     id: profile.id,
@@ -186,6 +203,8 @@ function serializePlayerProfile(profile: any) {
     penaltyCount: profile.penaltyCount ?? 0,
     earnedUah: formatMinor(profile.earnedUahMinor ?? 0n),
     withheldUah: formatMinor(profile.withheldUahMinor ?? 0n),
+    paidUah: formatMinor(profile.paidUahMinor ?? 0n),
+    balanceUah: formatMinor(profile.balanceUahMinor ?? 0n),
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
   };
@@ -227,7 +246,7 @@ function serializePenalty(penalty: any) {
 }
 
 function serializeAdmin(admin: any) {
-  const { passwordHash: _passwordHash, twoFactorSecret: _twoFactorSecret, ...safe } = admin;
+  const { passwordHash: _passwordHash, twoFactorSecret: _twoFactorSecret, passkeyChallenge: _passkeyChallenge, passkeyChallengeExpiresAt: _passkeyChallengeExpiresAt, ...safe } = admin;
   return safe;
 }
 
@@ -352,6 +371,112 @@ export async function registerAdminRoutes(
     },
   );
 
+  app.post("/api/admin/passkeys/authentication-options", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
+    const body = passkeyUsernameBody.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "Вкажіть логін" });
+    const admin = await store.findAdminByUsername(body.data.username);
+    if (!admin?.active) return reply.code(404).send({ error: "Passkey для цього логіна не знайдено" });
+    const passkeys = await store.listAdminPasskeys(admin.id);
+    if (!passkeys.length) return reply.code(404).send({ error: "Passkey для цього логіна не налаштовано" });
+    const { rpID } = webAuthnContext(request, config);
+    const options = await generateAuthenticationOptions({
+      rpID,
+      userVerification: "required",
+      allowCredentials: passkeys.map((item) => ({ id: item.credentialId as any, transports: item.transports as any })),
+    });
+    await store.setAdminPasskeyChallenge(admin.id, options.challenge, new Date(Date.now() + 5 * 60 * 1000));
+    return options;
+  });
+
+  app.post("/api/admin/passkeys/authenticate", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
+    const body = passkeyResponseBody.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "Некоректна відповідь Passkey" });
+    const admin = await store.findAdminByUsername(body.data.username);
+    const credentialId = typeof body.data.response?.id === "string" ? body.data.response.id : "";
+    const passkey = credentialId ? await store.findAdminPasskeyByCredentialId(credentialId) : null;
+    if (!admin?.active || !passkey || passkey.adminId !== admin.id || !admin.passkeyChallenge || !admin.passkeyChallengeExpiresAt || admin.passkeyChallengeExpiresAt <= new Date()) {
+      return reply.code(401).send({ error: "Запит Passkey прострочений або недійсний" });
+    }
+    try {
+      const { origin, rpID } = webAuthnContext(request, config);
+      const verification = await verifyAuthenticationResponse({
+        response: body.data.response,
+        expectedChallenge: admin.passkeyChallenge,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
+        requireUserVerification: true,
+        credential: { id: passkey.credentialId as any, publicKey: Uint8Array.from(passkey.publicKey), counter: Number(passkey.counter), transports: passkey.transports as any },
+      });
+      if (!verification.verified) return reply.code(401).send({ error: "Passkey не підтверджено" });
+      await store.updateAdminPasskeyCounter(passkey.id, BigInt(verification.authenticationInfo.newCounter));
+      await store.setAdminPasskeyChallenge(admin.id, null, null);
+      const rawToken = randomToken();
+      const csrfToken = randomToken(24);
+      const presence = adminPresence();
+      const expiresAt = new Date(presence.now.getTime() + config.sessionTtlHours * 60 * 60 * 1000);
+      const session = await store.createAdminSession({ tokenHash: sha256(rawToken), csrfToken, adminId: admin.id, expiresAt }, presence);
+      reply.setCookie(COOKIE_NAME, rawToken, { path: "/", httpOnly: true, secure: config.nodeEnv === "production", sameSite: "lax", signed: true, expires: expiresAt });
+      return { admin: { id: admin.id, username: admin.username, role: admin.role }, sessionToken: rawToken, csrfToken, expiresAt, accessMode: session.accessMode, canWrite: session.accessMode === "operator" && admin.role !== "observer" };
+    } catch {
+      await store.setAdminPasskeyChallenge(admin.id, null, null);
+      return reply.code(401).send({ error: "Не вдалося перевірити Face ID/Passkey" });
+    }
+  });
+
+  app.post("/api/admin/passkeys/registration-options", { preHandler: [requireAdmin, requireCsrf] }, async (request) => {
+    const admin = request.adminAuth!.admin;
+    const passkeys = await store.listAdminPasskeys(admin.id);
+    const { rpID } = webAuthnContext(request, config);
+    const options = await generateRegistrationOptions({
+      rpName: "Undying Metro Shop",
+      rpID,
+      userName: admin.username,
+      userID: new TextEncoder().encode(admin.id),
+      attestationType: "none",
+      authenticatorSelection: { residentKey: "preferred", userVerification: "required" },
+      preferredAuthenticatorType: "localDevice",
+      excludeCredentials: passkeys.map((item) => ({ id: item.credentialId as any, transports: item.transports as any })),
+    });
+    await store.setAdminPasskeyChallenge(admin.id, options.challenge, new Date(Date.now() + 5 * 60 * 1000));
+    return options;
+  });
+
+  app.post("/api/admin/passkeys/register", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+    const body = passkeyRegistrationBody.safeParse(request.body);
+    const admin = await store.findAdminByUsername(request.adminAuth!.admin.username);
+    if (!body.success || !admin?.passkeyChallenge || !admin.passkeyChallengeExpiresAt || admin.passkeyChallengeExpiresAt <= new Date()) return reply.code(400).send({ error: "Запит реєстрації Passkey прострочений" });
+    try {
+      const { origin, rpID } = webAuthnContext(request, config);
+      const verification = await verifyRegistrationResponse({ response: body.data.response, expectedChallenge: admin.passkeyChallenge, expectedOrigin: origin, expectedRPID: rpID, requireUserVerification: true });
+      if (!verification.verified) return reply.code(400).send({ error: "Passkey не підтверджено" });
+      const credential = verification.registrationInfo.credential;
+      const created = await store.createAdminPasskey({
+        adminId: admin.id,
+        credentialId: credential.id,
+        publicKey: credential.publicKey,
+        counter: BigInt(credential.counter),
+        transports: (body.data.response?.response?.transports ?? []) as string[],
+        deviceType: verification.registrationInfo.credentialDeviceType,
+        backedUp: verification.registrationInfo.credentialBackedUp,
+      });
+      await store.setAdminPasskeyChallenge(admin.id, null, null);
+      await audit(request, "admin.passkey_created", "admin_passkey", created.id);
+      return reply.code(201).send({ id: created.id, createdAt: created.createdAt });
+    } catch {
+      await store.setAdminPasskeyChallenge(admin.id, null, null);
+      return reply.code(400).send({ error: "Не вдалося зареєструвати Face ID/Passkey" });
+    }
+  });
+
+  app.get("/api/admin/passkeys", { preHandler: requireAdmin }, async (request) => ({ items: (await store.listAdminPasskeys(request.adminAuth!.admin.id)).map((item) => ({ id: item.id, createdAt: item.createdAt, lastUsedAt: item.lastUsedAt, deviceType: item.deviceType, backedUp: item.backedUp })) }));
+
+  app.delete("/api/admin/passkeys/:id", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Некоректний ID" });
+    const deleted = await store.deleteAdminPasskey(params.data.id, request.adminAuth!.admin.id);
+    return deleted ? { deletedId: params.data.id } : reply.code(404).send({ error: "Passkey не знайдено" });
+  });
+
   app.post("/api/admin/logout", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
     const token = sessionToken(request);
     if (token) await store.deleteAdminSession(sha256(token), adminPresence());
@@ -452,6 +577,39 @@ export async function registerAdminRoutes(
     return profile ? serializePlayerProfile(profile) : reply.code(404).send({ error: "Профиль не найден" });
   });
 
+  app.post("/api/admin/player-profiles/:id/portal-code", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Некоректний ID" });
+    const code = randomCode(10);
+    const profile = await store.rotateEscortPortalCode(params.data.id, keyedHash(code, config.reviewCodePepper));
+    if (!profile) return reply.code(404).send({ error: "Профіль не знайдено" });
+    await audit(request, "escort_profile.portal_code_rotated", "escort_player_profile", profile.id, { gameId: profile.gameId });
+    return { gameId: profile.gameId, code };
+  });
+
+  app.get("/api/admin/penalty-appeals", { preHandler: requireAdmin }, async (request, reply) => {
+    const query = appealQuery.safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "Некоректний статус" });
+    return {
+      items: (await store.listPenaltyAppeals(query.data.status)).map((item) => ({
+        ...item,
+        penaltyAmountUah: formatMinor(item.penaltyAmountUahMinor),
+        penaltyAmountUahMinor: undefined,
+      })),
+    };
+  });
+
+  app.patch("/api/admin/penalty-appeals/:id", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    const body = appealUpdateBody.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Перевірте рішення" });
+    const appeal = await store.updatePenaltyAppeal(params.data.id, { status: body.data.status, adminReply: body.data.adminReply || null, reviewedById: request.adminAuth!.admin.id });
+    if (!appeal) return reply.code(404).send({ error: "Оскарження не знайдено" });
+    await audit(request, "penalty_appeal.reviewed", "penalty_appeal", appeal.id, { status: appeal.status, gameId: appeal.gameId });
+    await notifier.operation("penalty_appeal_reviewed", ["⚖️ Оскарження розглянуто", `Гравець: ${appeal.playerName}`, `Рішення: ${appeal.status}`]);
+    return { id: appeal.id, status: appeal.status, adminReply: appeal.adminReply };
+  });
+
   app.get("/api/admin/audit-logs", { preHandler: requireAdmin }, async (request, reply) => {
     const query = pageQuery.safeParse(request.query);
     if (!query.success) return reply.code(400).send({ error: "Некорректные параметры" });
@@ -465,6 +623,24 @@ export async function registerAdminRoutes(
     const to = orderDate(query.data.to)!;
     if (from > to) return reply.code(400).send({ error: "Начало периода должно быть раньше конца" });
     return serializeFinancial(await store.financialSummary(from, to));
+  });
+
+  app.get("/api/admin/backups/latest", { preHandler: [requireAdmin, requireOwner] }, async (_request, reply) => {
+    const backup = await store.createBackup();
+    return reply.header("content-disposition", `attachment; filename="undying-metro-backup-${new Date().toISOString().slice(0, 10)}.json"`).send(backup);
+  });
+
+  app.post("/api/admin/backups/restore", { bodyLimit: 10 * 1024 * 1024, preHandler: [requireAdmin, requireCsrf, requireOperator, requireOwner] }, async (request, reply) => {
+    const body = backupRestoreBody.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "Для відновлення введіть RESTORE і виберіть правильний файл" });
+    try {
+      const restored = await store.restoreBackup(body.data.backup);
+      await audit(request, "backup.restored", "system", null, restored);
+      await notifier.operation("backup_restored", ["♻️ Резервну копію відновлено", `Адміністратор: ${request.adminAuth!.admin.username}`]);
+      return { success: true, restored };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "Не вдалося відновити резервну копію" });
+    }
   });
 
   app.get("/api/admin/reports/financial.csv", { preHandler: requireAdmin }, async (request, reply) => {
@@ -636,7 +812,14 @@ export async function registerAdminRoutes(
       const participant = order?.participants.find((item) => item.id === params.data.participantId);
       const withheld = participant?.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n) ?? 0n;
       const payout = participant ? participant.shareUahMinor - withheld : 0n;
-      if (order) await audit(request, "escort_participant.payment_changed", "escort_participant", params.data.participantId, { paid: body.data.paid, orderId: params.data.id, participantName: participant?.name, payoutUah: formatMinor(payout) });
+      if (order) await audit(request, "escort_participant.payment_changed", "escort_participant", params.data.participantId, {
+        paid: body.data.paid,
+        orderId: params.data.id,
+        participantName: participant?.name,
+        payoutUah: formatMinor(payout),
+        method: body.data.method || null,
+        note: body.data.note || null,
+      });
       if (order && participant) await notifier.operation("escort_payment_changed", [body.data.paid ? "💸 Выплата отмечена" : "↩️ Выплата отменена", `Игрок: ${participant.name}`, `Сумма: ${formatMinor(payout)} UAH`]);
       return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
     } catch (error) {

@@ -11,7 +11,7 @@ services:
     runtime: node
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run prisma:migrate && npm start
-    healthCheckPath: /api/health
+    healthCheckPath: /api/health/ready
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
@@ -42,5 +42,7 @@ services:
         sync: false
       - key: TELEGRAM_ADMIN_CHAT_IDS
         sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
       - key: ADMIN_PANEL_URL
         value: https://undying-metro-api.onrender.com/admin/

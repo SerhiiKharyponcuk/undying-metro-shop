@@ -9,6 +9,9 @@ import type {
   EscortOrderStatus,
   EscortPenaltyListRecord,
   EscortPlayerProfileRecord,
+  PenaltyAppealRecord,
+  PenaltyAppealStatus,
+  AdminPasskeyRecord,
   ExchangeRateSource,
   ManagerAvailabilityRecord,
   ManagerClaimResult,
@@ -114,6 +117,13 @@ export interface AppStore {
   ): Promise<EscortOrderRecord | null>;
   listEscortPlayerProfiles(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPlayerProfileRecord>>;
   getEscortPlayerProfile(id: string): Promise<EscortPlayerProfileRecord | null>;
+  findEscortPlayerProfileByGameId(gameId: string): Promise<EscortPlayerProfileRecord | null>;
+  listEscortOrdersByPlayerProfile(playerProfileId: string): Promise<EscortOrderRecord[]>;
+  rotateEscortPortalCode(id: string, portalCodeHash: string): Promise<EscortPlayerProfileRecord | null>;
+  findBuyerOrder(gameId: string, reviewCodeHash: string): Promise<EscortOrderRecord | null>;
+  createPenaltyAppeal(penaltyId: string, playerProfileId: string, message: string): Promise<PenaltyAppealRecord | null>;
+  listPenaltyAppeals(status?: PenaltyAppealStatus): Promise<PenaltyAppealRecord[]>;
+  updatePenaltyAppeal(id: string, input: { status: PenaltyAppealStatus; adminReply: string | null; reviewedById: string }): Promise<PenaltyAppealRecord | null>;
   getShopBankBalance(): Promise<bigint>;
   getDirectorBankBalance(): Promise<bigint>;
   getCreatorBankBalance(): Promise<bigint>;
@@ -122,6 +132,12 @@ export interface AppStore {
   listAdmins(): Promise<AdminRecord[]>;
   createAdmin(username: string, passwordHash: string, role?: AdminRole): Promise<AdminRecord>;
   updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string; twoFactorSecret?: string | null; twoFactorEnabled?: boolean }): Promise<AdminRecord | null>;
+  setAdminPasskeyChallenge(id: string, challenge: string | null, expiresAt: Date | null): Promise<AdminRecord | null>;
+  listAdminPasskeys(adminId: string): Promise<AdminPasskeyRecord[]>;
+  findAdminPasskeyByCredentialId(credentialId: string): Promise<AdminPasskeyRecord | null>;
+  createAdminPasskey(input: Omit<AdminPasskeyRecord, "id" | "createdAt" | "lastUsedAt" | "admin">): Promise<AdminPasskeyRecord>;
+  updateAdminPasskeyCounter(id: string, counter: bigint): Promise<void>;
+  deleteAdminPasskey(id: string, adminId: string): Promise<boolean>;
   createAdminSession(input: {
     tokenHash: string;
     csrfToken: string;
@@ -149,4 +165,7 @@ export interface AppStore {
     status: NotificationState;
     error?: string;
   }): Promise<void>;
+  healthCheck(): Promise<void>;
+  createBackup(): Promise<Record<string, unknown>>;
+  restoreBackup(data: unknown): Promise<Record<string, number>>;
 }
