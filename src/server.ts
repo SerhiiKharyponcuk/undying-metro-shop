@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { bootstrapInitialAdmin } from "./lib/bootstrap-admin.js";
 import { TelegramNotifier } from "./lib/telegram.js";
 import { PrismaStore } from "./store/prisma-store.js";
 
@@ -25,6 +26,7 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 
 try {
   await prisma.$connect();
+  await bootstrapInitialAdmin(prisma, process.env, app.log);
   await app.listen({ host: config.host, port: config.port });
 } catch (error) {
   app.log.fatal({ err: error }, "Unable to start server");
