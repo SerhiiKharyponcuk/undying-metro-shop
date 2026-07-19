@@ -33,7 +33,7 @@ services:
       - key: IP_HASH_SALT
         generateValue: true
       - key: SESSION_TTL_HOURS
-        value: 24
+        value: 168
       - key: TURNSTILE_REQUIRED
         value: true
       - key: TURNSTILE_SECRET_KEY

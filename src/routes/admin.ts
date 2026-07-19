@@ -3,7 +3,9 @@ import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import { calculateEscortSplit, formatMinor, formatRate, parseMoneyToMinor, parseRateToMicros, PENALTY_PERCENTAGES } from "../lib/escort-calculation.js";
 import { getOfficialNbuRate } from "../lib/nbu.js";
+import type { AdminNotifier } from "../lib/telegram.js";
 import { cleanPlainText, constantTimeEqual, containsMarkup, hashSecret, keyedHash, randomCode, randomToken, sha256, verifySecret } from "../lib/security.js";
+import { generateTotpSecret, openTotpSecret, sealTotpSecret, verifyTotp } from "../lib/totp.js";
 import type { AppStore } from "../store/store.js";
 
 const COOKIE_NAME = "undying_admin_session";
@@ -19,6 +21,7 @@ const plainText = (minimum: number, maximum: number) =>
 const loginBody = z.object({
   username: z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9._-]+$/),
   password: z.string().min(10).max(256),
+  otp: z.union([z.string().regex(/^\d{6}$/), z.literal("")]).optional(),
 });
 const optionalQueryValue = (value: unknown) => value === "" ? undefined : value;
 const reviewQuery = z.object({
@@ -63,6 +66,7 @@ const escortOrderQuery = z.object({
 });
 const escortStatusBody = z.object({ status: z.enum(["planned", "completed", "paid", "cancelled"]) });
 const participantPaidBody = z.object({ paid: z.boolean() });
+const participantAssignmentBody = z.object({ status: z.enum(["invited", "accepted", "declined"]) });
 const penaltyDeleteBody = z.object({ clearPaid: z.boolean().optional().default(false) });
 const participantParams = z.object({ id: z.string().uuid(), participantId: z.string().uuid() });
 const rateQuery = z.object({ currency: z.enum(["UAH", "EUR", "USD"]), date: orderDateValue });
@@ -151,6 +155,7 @@ function serializeEscortOrder(order: any) {
       shareUah: formatMinor(participant.shareUahMinor),
       active: participant.active,
       paid: participant.paid,
+      assignmentStatus: participant.assignmentStatus,
       paidAt: participant.paidAt,
       replacedAt: participant.replacedAt,
       excludedAt: participant.excludedAt,
@@ -221,6 +226,11 @@ function serializePenalty(penalty: any) {
   };
 }
 
+function serializeAdmin(admin: any) {
+  const { passwordHash: _passwordHash, twoFactorSecret: _twoFactorSecret, ...safe } = admin;
+  return safe;
+}
+
 function csvCell(value: unknown): string {
   return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
@@ -234,9 +244,9 @@ function sessionCookie(request: FastifyRequest): string {
 
 export async function registerAdminRoutes(
   app: FastifyInstance,
-  dependencies: { store: AppStore; config: AppConfig },
+  dependencies: { store: AppStore; config: AppConfig; notifier: AdminNotifier },
 ): Promise<void> {
-  const { store, config } = dependencies;
+  const { store, config, notifier } = dependencies;
 
   const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
     const rawToken = sessionCookie(request);
@@ -289,6 +299,11 @@ export async function registerAdminRoutes(
       if (admin) valid = await verifySecret(admin.passwordHash, parsed.data.password);
       else await hashSecret(parsed.data.password);
       if (!admin || !admin.active || !valid) return reply.code(401).send({ error: "Неверный логин или пароль" });
+      if (admin.twoFactorEnabled) {
+        if (!parsed.data.otp) return reply.code(401).send({ code: "OTP_REQUIRED", error: "Введите шестизначный код 2FA" });
+        const secret = admin.twoFactorSecret ? openTotpSecret(admin.twoFactorSecret, config.cookieSecret) : "";
+        if (!secret || !verifyTotp(secret, parsed.data.otp)) return reply.code(401).send({ code: "OTP_INVALID", error: "Неверный код 2FA" });
+      }
 
       const presence = adminPresence();
       const existingToken = sessionCookie(request);
@@ -313,10 +328,10 @@ export async function registerAdminRoutes(
         presence,
       );
       reply.setCookie(COOKIE_NAME, rawToken, {
-        path: "/api/admin",
+        path: "/",
         httpOnly: true,
         secure: config.nodeEnv === "production",
-        sameSite: config.nodeEnv === "production" ? "none" : "lax",
+        sameSite: "lax",
         signed: true,
         expires: expiresAt,
       });
@@ -333,7 +348,7 @@ export async function registerAdminRoutes(
   app.post("/api/admin/logout", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
     const token = sessionCookie(request);
     if (token) await store.deleteAdminSession(sha256(token), adminPresence());
-    reply.clearCookie(COOKIE_NAME, { path: "/api/admin" });
+    reply.clearCookie(COOKIE_NAME, { path: "/" });
     return { success: true };
   });
 
@@ -346,7 +361,7 @@ export async function registerAdminRoutes(
   }));
 
   app.get("/api/admin/accounts", { preHandler: [requireAdmin, requireOwner] }, async () => ({
-    items: (await store.listAdmins()).map(({ passwordHash: _passwordHash, ...admin }) => admin),
+    items: (await store.listAdmins()).map(serializeAdmin),
   }));
 
   app.post("/api/admin/accounts", { preHandler: [requireAdmin, requireCsrf, requireOperator, requireOwner] }, async (request, reply) => {
@@ -355,8 +370,7 @@ export async function registerAdminRoutes(
     try {
       const admin = await store.createAdmin(body.data.username, await hashSecret(body.data.password), body.data.role);
       await audit(request, "admin.created", "admin", admin.id, { username: admin.username, role: admin.role });
-      const { passwordHash: _passwordHash, ...safeAdmin } = admin;
-      return reply.code(201).send(safeAdmin);
+      return reply.code(201).send(serializeAdmin(admin));
     } catch {
       return reply.code(409).send({ error: "Администратор с таким логином уже существует" });
     }
@@ -383,8 +397,38 @@ export async function registerAdminRoutes(
     });
     if (!admin) return reply.code(404).send({ error: "Аккаунт не найден" });
     await audit(request, "admin.updated", "admin", admin.id, { role: body.data.role, active: body.data.active, passwordChanged: Boolean(body.data.password) });
-    const { passwordHash: _passwordHash, ...safeAdmin } = admin;
-    return safeAdmin;
+    return serializeAdmin(admin);
+  });
+
+  app.post("/api/admin/accounts/:id/2fa/setup", { preHandler: [requireAdmin, requireCsrf, requireOperator, requireOwner] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Некорректный ID аккаунта" });
+    const target = (await store.listAdmins()).find((admin) => admin.id === params.data.id);
+    if (!target) return reply.code(404).send({ error: "Аккаунт не найден" });
+    const secret = generateTotpSecret();
+    await store.updateAdmin(target.id, { twoFactorSecret: sealTotpSecret(secret, config.cookieSecret), twoFactorEnabled: false });
+    await audit(request, "admin.2fa_setup_started", "admin", target.id);
+    return { secret, otpauthUri: `otpauth://totp/Undying%20Metro:${encodeURIComponent(target.username)}?secret=${secret}&issuer=Undying%20Metro` };
+  });
+
+  app.post("/api/admin/accounts/:id/2fa/confirm", { preHandler: [requireAdmin, requireCsrf, requireOperator, requireOwner] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    const body = z.object({ code: z.string().regex(/^\d{6}$/) }).safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Введите шестизначный код" });
+    const target = (await store.listAdmins()).find((admin) => admin.id === params.data.id);
+    if (!target?.twoFactorSecret || !verifyTotp(openTotpSecret(target.twoFactorSecret, config.cookieSecret), body.data.code)) return reply.code(400).send({ error: "Неверный код 2FA" });
+    const updated = await store.updateAdmin(target.id, { twoFactorEnabled: true });
+    await audit(request, "admin.2fa_enabled", "admin", target.id);
+    return serializeAdmin(updated);
+  });
+
+  app.delete("/api/admin/accounts/:id/2fa", { preHandler: [requireAdmin, requireCsrf, requireOperator, requireOwner] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Некорректный ID аккаунта" });
+    const updated = await store.updateAdmin(params.data.id, { twoFactorSecret: null, twoFactorEnabled: false });
+    if (!updated) return reply.code(404).send({ error: "Аккаунт не найден" });
+    await audit(request, "admin.2fa_disabled", "admin", updated.id);
+    return serializeAdmin(updated);
   });
 
   app.get("/api/admin/player-profiles", { preHandler: requireAdmin }, async (request, reply) => {
@@ -515,6 +559,7 @@ export async function registerAdminRoutes(
         })),
       });
       await audit(request, "escort_order.created", "escort_order", order.id, { buyerGameId: parsed.data.buyerGameId });
+      await notifier.operation("escort_order_created", ["🛒 Новое сопровождение", `Покупатель: ${order.buyerName}`, `Позиция: ${order.item}`, `Сумма: ${formatMinor(order.amountUahMinor)} UAH`]);
       return reply.code(201).send({ ...serializeEscortOrder(order), reviewCode });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Не удалось рассчитать сопровождение";
@@ -528,6 +573,7 @@ export async function registerAdminRoutes(
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте статус" });
     const order = await store.updateEscortOrderStatus(params.data.id, body.data.status);
     if (order) await audit(request, "escort_order.status_changed", "escort_order", order.id, { status: body.data.status });
+    if (order) await notifier.operation("escort_order_status", ["📦 Статус сопровождения изменён", `Покупатель: ${order.buyerName}`, `Статус: ${body.data.status}`]);
     return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Сопровождение не найдено" });
   });
 
@@ -580,11 +626,27 @@ export async function registerAdminRoutes(
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте данные выплаты" });
     try {
       const order = await store.updateEscortParticipantPaid(params.data.id, params.data.participantId, body.data.paid);
-      if (order) await audit(request, "escort_participant.payment_changed", "escort_participant", params.data.participantId, { paid: body.data.paid, orderId: params.data.id });
+      const participant = order?.participants.find((item) => item.id === params.data.participantId);
+      const withheld = participant?.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n) ?? 0n;
+      const payout = participant ? participant.shareUahMinor - withheld : 0n;
+      if (order) await audit(request, "escort_participant.payment_changed", "escort_participant", params.data.participantId, { paid: body.data.paid, orderId: params.data.id, participantName: participant?.name, payoutUah: formatMinor(payout) });
+      if (order && participant) await notifier.operation("escort_payment_changed", [body.data.paid ? "💸 Выплата отмечена" : "↩️ Выплата отменена", `Игрок: ${participant.name}`, `Сумма: ${formatMinor(payout)} UAH`]);
       return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
     } catch (error) {
       return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось изменить выплату" });
     }
+  });
+
+  app.patch("/api/admin/escort-orders/:id/participants/:participantId/assignment", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
+    const params = participantParams.safeParse(request.params);
+    const body = participantAssignmentBody.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте статус назначения" });
+    const order = await store.updateEscortParticipantAssignment(params.data.id, params.data.participantId, body.data.status);
+    if (!order) return reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
+    const participant = order.participants.find((item) => item.id === params.data.participantId);
+    await audit(request, "escort_participant.assignment_changed", "escort_participant", params.data.participantId, { orderId: params.data.id, status: body.data.status, participantName: participant?.name });
+    await notifier.operation("escort_assignment_changed", ["👥 Назначение обновлено", `Игрок: ${participant?.name ?? "неизвестно"}`, `Статус: ${body.data.status}`]);
+    return serializeEscortOrder(order);
   });
 
   app.post("/api/admin/escort-orders/:id/participants/:participantId/penalties", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
@@ -599,6 +661,8 @@ export async function registerAdminRoutes(
         request.adminAuth!.admin.id,
       );
       if (order) await audit(request, "escort_participant.violation_added", "escort_participant", params.data.participantId, { orderId: params.data.id, reason: body.data.reason });
+      const participant = order?.participants.find((item) => item.id === params.data.participantId);
+      if (order && participant) await notifier.operation("escort_penalty_created", ["⚠️ Новый штраф", `Игрок: ${participant.name}`, `Причина: ${body.data.reason}`]);
       return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
     } catch (error) {
       return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось применить штраф" });

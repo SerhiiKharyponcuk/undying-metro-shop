@@ -203,6 +203,7 @@ export class MemoryStore implements AppStore {
         dailyViolationCount: 0,
         active: true,
         paid: false,
+        assignmentStatus: "invited",
         paidAt: null,
         replacedAt: null,
         excludedAt: null,
@@ -329,6 +330,7 @@ export class MemoryStore implements AppStore {
       shareUahMinor: participant.shareUahMinor - withheld,
       active: true,
       paid: false,
+      assignmentStatus: "invited",
       paidAt: null,
       replacedAt: null,
       excludedAt: null,
@@ -372,6 +374,15 @@ export class MemoryStore implements AppStore {
     if (order.reviewCodeConsumedAt) throw new Error("Отзыв для этого заказа уже оставлен");
     order.reviewCodeHash = reviewCodeHash;
     order.reviewCodeIssuedAt = issuedAt;
+    order.updatedAt = new Date();
+    return order;
+  }
+
+  async updateEscortParticipantAssignment(orderId: string, participantId: string, status: "invited" | "accepted" | "declined"): Promise<EscortOrderRecord | null> {
+    const order = this.escortOrders.find((item) => item.id === orderId);
+    const participant = order?.participants.find((item) => item.id === participantId);
+    if (!order || !participant) return null;
+    participant.assignmentStatus = status;
     order.updatedAt = new Date();
     return order;
   }
@@ -503,12 +514,12 @@ export class MemoryStore implements AppStore {
   }
 
   async createAdmin(username: string, passwordHash: string, role: AdminRole = "admin"): Promise<AdminRecord> {
-    const value: AdminRecord = { id: randomUUID(), username, passwordHash, role, active: true, createdAt: new Date() };
+    const value: AdminRecord = { id: randomUUID(), username, passwordHash, role, active: true, twoFactorSecret: null, twoFactorEnabled: false, createdAt: new Date() };
     this.admins.push(value);
     return value;
   }
 
-  async updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string }): Promise<AdminRecord | null> {
+  async updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string; twoFactorSecret?: string | null; twoFactorEnabled?: boolean }): Promise<AdminRecord | null> {
     const admin = this.admins.find((item) => item.id === id);
     if (!admin) return null;
     Object.assign(admin, input);

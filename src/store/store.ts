@@ -103,6 +103,7 @@ export interface AppStore {
   updateEscortOrderStatus(id: string, status: EscortOrderStatus): Promise<EscortOrderRecord | null>;
   rotateEscortReviewCode(id: string, reviewCodeHash: string, issuedAt: Date): Promise<EscortOrderRecord | null>;
   updateEscortParticipantPaid(orderId: string, participantId: string, paid: boolean): Promise<EscortOrderRecord | null>;
+  updateEscortParticipantAssignment(orderId: string, participantId: string, status: "invited" | "accepted" | "declined"): Promise<EscortOrderRecord | null>;
   penalizeEscortParticipant(orderId: string, participantId: string, reason: string, adminId: string): Promise<EscortOrderRecord | null>;
   listEscortPenalties(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPenaltyListRecord>>;
   deleteEscortPenalty(id: string, clearPaid?: boolean): Promise<EscortPenaltyListRecord | null>;
@@ -120,7 +121,7 @@ export interface AppStore {
   findAdminByUsername(username: string): Promise<AdminRecord | null>;
   listAdmins(): Promise<AdminRecord[]>;
   createAdmin(username: string, passwordHash: string, role?: AdminRole): Promise<AdminRecord>;
-  updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string }): Promise<AdminRecord | null>;
+  updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string; twoFactorSecret?: string | null; twoFactorEnabled?: boolean }): Promise<AdminRecord | null>;
   createAdminSession(input: {
     tokenHash: string;
     csrfToken: string;

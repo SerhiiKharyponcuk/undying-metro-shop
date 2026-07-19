@@ -15,6 +15,7 @@ export type EscortOrderStatus = "planned" | "completed" | "paid" | "cancelled";
 export type ExchangeRateSource = "uah" | "nbu" | "manual";
 export type AdminAccessMode = "operator" | "observer";
 export type AdminRole = "owner" | "director" | "admin" | "observer";
+export type EscortAssignmentStatus = "invited" | "accepted" | "declined";
 
 export interface AdminRecord {
   id: string;
@@ -22,6 +23,8 @@ export interface AdminRecord {
   passwordHash: string;
   role: AdminRole;
   active: boolean;
+  twoFactorSecret: string | null;
+  twoFactorEnabled: boolean;
   createdAt: Date;
 }
 
@@ -116,6 +119,7 @@ export interface EscortParticipantRecord {
   shareUahMinor: bigint;
   active: boolean;
   paid: boolean;
+  assignmentStatus: EscortAssignmentStatus;
   paidAt: Date | null;
   replacedAt: Date | null;
   excludedAt: Date | null;

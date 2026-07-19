@@ -138,13 +138,14 @@
     document.querySelector("#completedBadge").textContent = counts.completedEscortOrders;
   }
 
-  async function bootstrap() {
+  async function bootstrap(afterLogin = false) {
     try {
       const dashboard = await api("/api/admin/dashboard", { method: "GET" });
       showApp(dashboard);
       await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadPlayerProfiles(), loadPenalties(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
     } catch (error) {
-      showLogin(error.status === 401 ? "" : error.message);
+      const blockedCookieMessage = "Вход не сохранился. Откройте защищённую админку по адресу undying-metro-api.onrender.com/admin/ и повторите вход.";
+      showLogin(error.status === 401 ? (afterLogin ? blockedCookieMessage : "") : error.message);
     }
   }
 
@@ -158,8 +159,15 @@
       csrfToken = result.csrfToken;
       sessionStorage.setItem("undying_admin_csrf", csrfToken);
       loginForm.reset();
-      await bootstrap();
+      document.querySelector("#otpField").hidden = true;
+      loginForm.elements.otp.required = false;
+      await bootstrap(true);
     } catch (error) {
+      if (error.code === "OTP_REQUIRED" || error.code === "OTP_INVALID") {
+        document.querySelector("#otpField").hidden = false;
+        loginForm.elements.otp.required = true;
+        loginForm.elements.otp.focus();
+      }
       document.querySelector("#loginStatus").textContent = error.message;
     } finally {
       busy(loginForm, false);
@@ -177,9 +185,12 @@
     button.addEventListener("click", () => {
       activateTab(button.dataset.adminTab);
       if (button.dataset.adminTab === "completed") void loadCompletedEscorts();
+      if (button.dataset.adminTab === "archive") void loadArchivedEscorts();
       if (button.dataset.adminTab === "players") void loadPlayerProfiles();
       if (button.dataset.adminTab === "penalties") void loadPenalties();
+      if (button.dataset.adminTab === "payments") void loadPayments();
       if (button.dataset.adminTab === "reports") void loadFinancialReport();
+      if (button.dataset.adminTab === "analytics") void loadAnalytics();
       if (button.dataset.adminTab === "audit") void loadAuditLogs();
       if (button.dataset.adminTab === "accounts") void loadAccounts();
     });
@@ -426,12 +437,23 @@
       const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = player.paid; writeControl(checkbox, Boolean(player.replacedAt));
       const paymentText = document.createElement("span"); paymentText.textContent = player.replacedAt ? "Доля передана" : (player.paid ? "Выплачено" : "Отметить выплату");
       label.append(checkbox, paymentText);
+      const assignment = document.createElement("select"); assignment.setAttribute("aria-label", `Статус назначения ${player.name}`); writeControl(assignment, Boolean(player.replacedAt));
+      [["invited", "Приглашён"], ["accepted", "Принял"], ["declined", "Отказался"]].forEach(([value, text]) => {
+        const option = document.createElement("option"); option.value = value; option.textContent = text; option.selected = (player.assignmentStatus || "invited") === value; assignment.append(option);
+      });
+      assignment.addEventListener("change", async () => {
+        assignment.disabled = true;
+        try {
+          await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}/assignment`, { method: "PATCH", body: JSON.stringify({ status: assignment.value }) });
+          await Promise.all([loadEscortOrders(), loadCompletedEscorts(), loadArchivedEscorts()]);
+        } catch (error) { globalStatus.textContent = error.message; assignment.disabled = false; }
+      });
       checkbox.addEventListener("change", async () => {
         checkbox.disabled = true;
         try { await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}`, { method: "PATCH", body: JSON.stringify({ paid: checkbox.checked }) }); await loadEscortOrders(); }
         catch (error) { checkbox.checked = !checkbox.checked; checkbox.disabled = !canWrite() || Boolean(player.replacedAt); globalStatus.textContent = error.message; }
       });
-      top.append(person, label);
+      top.append(person, assignment, label);
 
       const figures = document.createElement("div"); figures.className = "escort-player__figures";
       [["Исходная доля", player.shareUah], ["Удержано", player.penaltyTotalUah], ["К выплате", player.payoutUah]].forEach(([caption, value]) => {
@@ -481,7 +503,7 @@
           try {
             await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}/replacement`, { method: "POST", body: JSON.stringify({ name: replacementName.value, gameId: replacementGameId.value, contact: replacementContact.value }) });
             globalStatus.textContent = "Игрок заменён, оставшаяся доля передана";
-            await loadEscortOrders();
+        await Promise.all([loadEscortOrders(), loadCompletedEscorts(), loadArchivedEscorts(), refreshDashboard()]);
           } catch (error) { globalStatus.textContent = error.message; replace.disabled = false; }
         });
         actions.append(penaltyForm, replacementForm); details.append(summary, actions); row.append(details);
@@ -528,6 +550,20 @@
         container.append(empty("Выполненных сопровождений пока нет", "После смены статуса на «Завершено» или «Выплачено» заказ появится здесь."));
       }
       items.forEach((order) => container.append(escortOrderElement(order)));
+    } catch (error) {
+      container.replaceChildren(empty("Ошибка загрузки", error.message));
+    }
+  }
+
+  async function loadArchivedEscorts() {
+    const container = document.querySelector("#archivedEscortOrders");
+    if (!container) return;
+    container.replaceChildren(empty("Загрузка…", "Получаем отменённые сопровождения"));
+    try {
+      const result = await api("/api/admin/escort-orders?status=cancelled&page=1&pageSize=50", { method: "GET" });
+      container.replaceChildren();
+      if (!result.items.length) container.append(empty("Архив пуст", "Отменённые сопровождения появятся здесь."));
+      result.items.forEach((order) => container.append(escortOrderElement(order)));
     } catch (error) {
       container.replaceChildren(empty("Ошибка загрузки", error.message));
     }
@@ -828,6 +864,102 @@
     } catch (error) { globalStatus.textContent = error.message; }
   }
 
+  function saveDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadBackup() {
+    try {
+      const { from, to } = reportDates();
+      const [planned, completed, paid, cancelled, profiles, penalties, audit, report] = await Promise.all([
+        api("/api/admin/escort-orders?status=planned&page=1&pageSize=50", { method: "GET" }),
+        api("/api/admin/escort-orders?status=completed&page=1&pageSize=50", { method: "GET" }),
+        api("/api/admin/escort-orders?status=paid&page=1&pageSize=50", { method: "GET" }),
+        api("/api/admin/escort-orders?status=cancelled&page=1&pageSize=50", { method: "GET" }),
+        api("/api/admin/player-profiles?page=1&pageSize=100", { method: "GET" }),
+        api("/api/admin/penalties?page=1&pageSize=100", { method: "GET" }),
+        api("/api/admin/audit-logs?page=1&pageSize=100", { method: "GET" }),
+        api(`/api/admin/reports/financial?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { method: "GET" }),
+      ]);
+      const snapshot = {
+        exportedAt: new Date().toISOString(),
+        period: { from, to },
+        report,
+        orders: [...planned.items, ...completed.items, ...paid.items, ...cancelled.items],
+        profiles: profiles.items,
+        penalties: penalties.items,
+        audit: audit.items,
+      };
+      saveDownload(new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" }), `undying-metro-backup-${new Date().toISOString().slice(0, 10)}.json`);
+      globalStatus.textContent = "Резервная копия подготовлена";
+    } catch (error) { globalStatus.textContent = error.message; }
+  }
+
+  async function loadPayments() {
+    const container = document.querySelector("#paymentHistory");
+    if (!container) return;
+    container.replaceChildren(empty("Загрузка…", "Получаем историю выплат"));
+    try {
+      const result = await api("/api/admin/audit-logs?page=1&pageSize=100", { method: "GET" });
+      const payments = result.items.filter((item) => item.action === "escort_participant.payment_changed");
+      container.replaceChildren();
+      if (!payments.length) container.append(empty("Выплат пока нет", "Все отметки выплат и отмены появятся здесь."));
+      payments.forEach((event) => {
+        const card = document.createElement("article"); card.className = "audit-card";
+        const title = document.createElement("strong");
+        title.textContent = event.details?.paid ? `Выплата: ${event.details?.participantName || "игрок"}` : `Выплата отменена: ${event.details?.participantName || "игрок"}`;
+        const meta = document.createElement("p");
+        meta.textContent = `${event.details?.payoutUah ? money(event.details.payoutUah) : ""} • ${event.adminUsername || "Система"} • ${new Date(event.createdAt).toLocaleString("ru-RU")}`;
+        card.append(title, meta);
+        if (canWrite() && event.details?.paid && event.details?.orderId && event.entityId) {
+          const reverse = document.createElement("button"); reverse.type = "button"; reverse.textContent = "Отменить выплату"; writeControl(reverse);
+          reverse.addEventListener("click", async () => {
+            if (!window.confirm("Снять отметку выплаты у этого игрока?")) return;
+            try {
+              await api(`/api/admin/escort-orders/${event.details.orderId}/participants/${event.entityId}`, { method: "PATCH", body: JSON.stringify({ paid: false }) });
+              await Promise.all([loadPayments(), loadEscortOrders(), loadCompletedEscorts()]);
+            } catch (error) { globalStatus.textContent = error.message; }
+          });
+          card.append(reverse);
+        }
+        container.append(card);
+      });
+    } catch (error) { container.replaceChildren(empty("Ошибка загрузки", error.message)); }
+  }
+
+  async function loadAnalytics() {
+    const container = document.querySelector("#operationsAnalytics");
+    if (!container) return;
+    container.replaceChildren(empty("Загрузка…", "Считаем показатели"));
+    try {
+      const { from, to } = reportDates();
+      const [profiles, active, cancelled, report] = await Promise.all([
+        api("/api/admin/player-profiles?page=1&pageSize=100", { method: "GET" }),
+        api("/api/admin/escort-orders?page=1&pageSize=50", { method: "GET" }),
+        api("/api/admin/escort-orders?status=cancelled&page=1&pageSize=50", { method: "GET" }),
+        api(`/api/admin/reports/financial?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { method: "GET" }),
+      ]);
+      const topPlayer = [...profiles.items].sort((a, b) => Number(b.earnedUah) - Number(a.earnedUah))[0];
+      const itemCounts = [...active.items, ...cancelled.items].reduce((map, order) => map.set(order.item, (map.get(order.item) || 0) + 1), new Map());
+      const popular = [...itemCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      const values = [
+        ["Оборот за период", money(report.grossUah)],
+        ["Заказов за период", report.orderCount],
+        ["Отменено", cancelled.total],
+        ["Сопровождающих", profiles.total],
+        ["Лучший игрок", topPlayer ? `${topPlayer.displayName} • ${money(topPlayer.earnedUah)}` : "Нет данных"],
+        ["Популярная позиция", popular ? `${popular[0]} • ${popular[1]}` : "Нет данных"],
+      ];
+      container.replaceChildren();
+      values.forEach(([label, value]) => { const card = document.createElement("article"); const small = document.createElement("small"); small.textContent = label; const strong = document.createElement("strong"); strong.textContent = value; card.append(small, strong); container.append(card); });
+    } catch (error) { container.replaceChildren(empty("Ошибка аналитики", error.message)); }
+  }
+
   async function loadAuditLogs() {
     const container = document.querySelector("#auditLogs");
     if (!container) return;
@@ -862,7 +994,23 @@
         const active = document.createElement("label"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = account.active; writeControl(checkbox); active.append(checkbox, document.createTextNode(" Активен"));
         const save = document.createElement("button"); save.type = "button"; save.textContent = "Сохранить"; writeControl(save);
         save.addEventListener("click", async () => { try { await api(`/api/admin/accounts/${account.id}`, { method: "PATCH", body: JSON.stringify({ role: role.value, active: checkbox.checked }) }); await loadAccounts(); } catch (error) { globalStatus.textContent = error.message; } });
-        card.append(name, role, active, save); container.append(card);
+        const twoFactor = document.createElement("button"); twoFactor.type = "button"; twoFactor.textContent = account.twoFactorEnabled ? "Отключить 2FA" : "Настроить 2FA"; writeControl(twoFactor);
+        twoFactor.addEventListener("click", async () => {
+          try {
+            if (account.twoFactorEnabled) {
+              if (!window.confirm(`Отключить 2FA для ${account.username}?`)) return;
+              await api(`/api/admin/accounts/${account.id}/2fa`, { method: "DELETE", body: "{}" });
+            } else {
+              const setup = await api(`/api/admin/accounts/${account.id}/2fa/setup`, { method: "POST", body: "{}" });
+              window.prompt("Добавьте этот секрет в Google/Microsoft Authenticator", setup.secret);
+              const code = window.prompt("Введите шестизначный код из приложения");
+              if (!code) return;
+              await api(`/api/admin/accounts/${account.id}/2fa/confirm`, { method: "POST", body: JSON.stringify({ code }) });
+            }
+            await loadAccounts();
+          } catch (error) { globalStatus.textContent = error.message; }
+        });
+        card.append(name, role, active, save, twoFactor); container.append(card);
       });
     } catch (error) { container.replaceChildren(empty("Ошибка загрузки", error.message)); }
   }
@@ -881,7 +1029,7 @@
   async function refreshAll() {
     globalStatus.textContent = "";
     await refreshDashboard();
-    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadPlayerProfiles(), loadPenalties(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
+    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts(), loadArchivedEscorts(), loadPlayerProfiles(), loadPenalties(), loadFinancialReport(), loadAuditLogs(), currentRole === "owner" ? loadAccounts() : Promise.resolve()]);
     if (activeTicketId) await loadTicketDetail(activeTicketId);
   }
 
@@ -900,9 +1048,12 @@
       await loadCompletedEscorts();
       return;
     }
+    if (activeTab === "archive") { await loadArchivedEscorts(); return; }
     if (activeTab === "players") { await loadPlayerProfiles(); return; }
     if (activeTab === "penalties") { await loadPenalties(); return; }
+    if (activeTab === "payments") { await loadPayments(); return; }
     if (activeTab === "reports") { await loadFinancialReport(); return; }
+    if (activeTab === "analytics") { await loadAnalytics(); return; }
     if (activeTab === "audit") { await loadAuditLogs(); return; }
     if (activeTab === "accounts") { await loadAccounts(); return; }
     await loadReviews();
@@ -938,6 +1089,7 @@
   document.querySelector("#penaltySearch").addEventListener("input", () => void loadPenalties());
   document.querySelector("#loadReport").addEventListener("click", () => void loadFinancialReport());
   document.querySelector("#downloadReport").addEventListener("click", () => void downloadFinancialReport());
+  document.querySelector("#downloadBackup").addEventListener("click", () => void downloadBackup());
   document.querySelector("#accountForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;

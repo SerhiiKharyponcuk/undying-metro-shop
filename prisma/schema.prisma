@@ -76,12 +76,20 @@ enum AdminRole {
   observer
 }
 
+enum EscortAssignmentStatus {
+  invited
+  accepted
+  declined
+}
+
 model Admin {
   id              String           @id @default(uuid())
   username        String           @unique @db.VarChar(64)
   passwordHash    String           @map("password_hash")
   role            AdminRole        @default(admin)
   active          Boolean          @default(true)
+  twoFactorSecret String?          @map("two_factor_secret")
+  twoFactorEnabled Boolean         @default(false) @map("two_factor_enabled")
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
   sessions        AdminSession[]
@@ -137,6 +145,7 @@ model EscortParticipant {
   shareUahMinor    BigInt               @map("share_uah_minor")
   active           Boolean              @default(true)
   paid             Boolean              @default(false)
+  assignmentStatus EscortAssignmentStatus @default(invited) @map("assignment_status")
   paidAt           DateTime?            @map("paid_at")
   replacedAt       DateTime?            @map("replaced_at")
   excludedAt       DateTime?            @map("excluded_at")

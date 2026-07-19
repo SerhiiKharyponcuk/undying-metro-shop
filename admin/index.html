@@ -8,6 +8,14 @@
     <link rel="icon" href="../assets/undying-metro-avatar.webp" type="image/webp" />
     <link rel="stylesheet" href="styles.css?v=15" />
     <script src="../config.js?v=11"></script>
+    <script>
+      (() => {
+        const apiBase = String(window.UNDYING_CONFIG?.API_BASE_URL || "").replace(/\/$/, "");
+        if (!apiBase) return;
+        const canonical = new URL(apiBase);
+        if (canonical.origin !== window.location.origin) window.location.replace(`${canonical.origin}/admin/`);
+      })();
+    </script>
   </head>
   <body>
     <div class="admin-world" aria-hidden="true"><span></span><span></span></div>
@@ -21,6 +29,7 @@
         <form id="loginForm">
           <label><span>Логин</span><input name="username" autocomplete="username" minlength="3" maxlength="64" required /></label>
           <label><span>Пароль</span><input name="password" type="password" autocomplete="current-password" minlength="10" required /></label>
+          <label id="otpField" hidden><span>Код 2FA</span><input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" /></label>
           <p class="admin-status" id="loginStatus" role="status"></p>
           <button class="admin-primary" type="submit"><span>Войти</span><i></i></button>
         </form>
@@ -59,9 +68,12 @@
           <button type="button" data-admin-tab="tickets">Поддержка <b id="ticketBadge">0</b></button>
           <button type="button" data-admin-tab="escorts">Сопроводы</button>
           <button type="button" data-admin-tab="completed">Выполненные <b id="completedBadge">0</b></button>
+          <button type="button" data-admin-tab="archive">Архив</button>
           <button type="button" data-admin-tab="players">Игроки</button>
           <button type="button" data-admin-tab="penalties">Штрафы <b id="penaltyBadge">0</b></button>
+          <button type="button" data-admin-tab="payments">Выплаты</button>
           <button type="button" data-admin-tab="reports">Финансы</button>
+          <button type="button" data-admin-tab="analytics">Аналитика</button>
           <button type="button" data-admin-tab="audit">Журнал</button>
           <button type="button" data-admin-tab="accounts" id="accountsTab" hidden>Аккаунты</button>
         </nav>
@@ -90,9 +102,20 @@
               <input id="reportTo" type="date" />
               <button id="loadReport" type="button">Показать</button>
               <button id="downloadReport" type="button">CSV</button>
+              <button id="downloadBackup" type="button">Резервная копия</button>
             </div>
           </div>
           <div class="report-grid" id="financialReport"></div>
+        </section>
+
+        <section class="admin-section" data-admin-section="payments" hidden>
+          <div class="section-toolbar"><div><h2>История выплат</h2><p>Отметки и отмены выплат с возможностью исправить ошибочную выплату.</p></div></div>
+          <div class="admin-list" id="paymentHistory"></div>
+        </section>
+
+        <section class="admin-section" data-admin-section="analytics" hidden>
+          <div class="section-toolbar"><div><h2>Операционная аналитика</h2><p>Оборот, отмены, лучшие сопровождающие и популярные позиции.</p></div></div>
+          <div class="report-grid" id="operationsAnalytics"></div>
         </section>
 
         <section class="admin-section" data-admin-section="audit" hidden>
@@ -119,6 +142,11 @@
             <button class="is-active" type="button" role="tab" aria-selected="true">Сопровождения</button>
           </div>
           <div class="escort-orders" id="completedEscortOrders"></div>
+        </section>
+
+        <section class="admin-section" data-admin-section="archive" hidden>
+          <div class="section-toolbar"><div><h2>Архив отменённых заказов</h2><p>Отменённые сопровождения не теряются: их можно проверить или восстановить.</p></div></div>
+          <div class="escort-orders" id="archivedEscortOrders"></div>
         </section>
 
         <section class="admin-section is-active" data-admin-section="reviews">
@@ -234,6 +262,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=17"></script>
+    <script src="app.js?v=18"></script>
   </body>
 </html>

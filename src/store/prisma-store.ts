@@ -102,6 +102,8 @@ function mapAdmin(value: any): AdminRecord {
     passwordHash: value.passwordHash,
     role: value.role,
     active: value.active,
+    twoFactorSecret: value.twoFactorSecret ?? null,
+    twoFactorEnabled: value.twoFactorEnabled ?? false,
     createdAt: value.createdAt,
   };
 }
@@ -252,6 +254,7 @@ function mapEscortOrder(value: any): EscortOrderRecord {
       shareUahMinor: participant.shareUahMinor,
       active: participant.active,
       paid: participant.paid,
+      assignmentStatus: participant.assignmentStatus,
       paidAt: participant.paidAt,
       replacedAt: participant.replacedAt,
       excludedAt: participant.excludedAt,
@@ -639,6 +642,14 @@ export class PrismaStore implements AppStore {
     return order ? mapEscortOrder(order) : null;
   }
 
+  async updateEscortParticipantAssignment(orderId: string, participantId: string, status: "invited" | "accepted" | "declined"): Promise<EscortOrderRecord | null> {
+    const participant = await this.prisma.escortParticipant.findFirst({ where: { id: participantId, orderId } });
+    if (!participant) return null;
+    await this.prisma.escortParticipant.update({ where: { id: participantId }, data: { assignmentStatus: status } });
+    const order = await this.prisma.escortOrder.findUnique({ where: { id: orderId }, include: escortOrderInclude });
+    return order ? mapEscortOrder(order) : null;
+  }
+
   async listEscortPenalties(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPenaltyListRecord>> {
     const where = query ? {
       OR: [
@@ -874,7 +885,7 @@ export class PrismaStore implements AppStore {
     return mapAdmin(await this.prisma.admin.create({ data: { username, passwordHash, role: role as any } }));
   }
 
-  async updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string }): Promise<AdminRecord | null> {
+  async updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string; twoFactorSecret?: string | null; twoFactorEnabled?: boolean }): Promise<AdminRecord | null> {
     const existing = await this.prisma.admin.findUnique({ where: { id } });
     if (!existing) return null;
     return mapAdmin(await this.prisma.admin.update({ where: { id }, data: input as any }));

@@ -8,12 +8,14 @@ export interface AdminNotifier {
   review(review: ReviewRecord): Promise<void>;
   ticket(ticket: SupportTicketRecord): Promise<void>;
   ticketMessage(ticket: SupportTicketRecord, message: SupportMessageRecord): Promise<void>;
+  operation(eventType: string, lines: string[]): Promise<void>;
 }
 
 export class NoopNotifier implements AdminNotifier {
   async review(): Promise<void> {}
   async ticket(): Promise<void> {}
   async ticketMessage(): Promise<void> {}
+  async operation(): Promise<void> {}
 }
 
 export class TelegramNotifier implements AdminNotifier {
@@ -77,6 +79,11 @@ export class TelegramNotifier implements AdminNotifier {
         link ? `Ответить: ${link}` : "",
       ].filter(Boolean).join("\n"),
     );
+  }
+
+  async operation(eventType: string, lines: string[]): Promise<void> {
+    const link = this.config.adminPanelUrl ? `Админка: ${this.config.adminPanelUrl}` : "";
+    await this.send(eventType, [...lines, link].filter(Boolean).join("\n"));
   }
 
   private async send(eventType: string, message: string): Promise<void> {

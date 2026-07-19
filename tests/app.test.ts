@@ -4,6 +4,7 @@ import { buildApp } from "../src/app.js";
 import type { AppConfig } from "../src/config.js";
 import type { AdminNotifier } from "../src/lib/telegram.js";
 import { hashSecret, keyedHash } from "../src/lib/security.js";
+import { sealTotpSecret, totpCode } from "../src/lib/totp.js";
 import type { ReviewRecord, SupportMessageRecord, SupportTicketRecord } from "../src/types/domain.js";
 import { MemoryStore } from "./memory-store.js";
 
@@ -11,9 +12,11 @@ class RecordingNotifier implements AdminNotifier {
   reviews: string[] = [];
   tickets: string[] = [];
   messages: string[] = [];
+  operations: string[] = [];
   async review(review: ReviewRecord) { this.reviews.push(review.id); }
   async ticket(ticket: SupportTicketRecord) { this.tickets.push(ticket.id); }
   async ticketMessage(ticket: SupportTicketRecord, message: SupportMessageRecord) { this.messages.push(`${ticket.id}:${message.id}`); }
+  async operation(eventType: string) { this.operations.push(eventType); }
 }
 
 const config: AppConfig = {
@@ -210,6 +213,19 @@ describe("Undying Metro API", () => {
     expect(limited.statusCode).toBe(429);
   });
 
+  it("требует 2FA и устанавливает Safari-совместимую cookie", async () => {
+    const admin = store.admins[0]!;
+    const secret = "JBSWY3DPEHPK3PXP";
+    await store.updateAdmin(admin.id, { twoFactorSecret: sealTotpSecret(secret, config.cookieSecret), twoFactorEnabled: true });
+    const challenge = await app.inject({ method: "POST", url: "/api/admin/login", payload: { username: "admin", password: "very-secure-password" } });
+    expect(challenge.statusCode).toBe(401);
+    expect(challenge.json()).toMatchObject({ code: "OTP_REQUIRED" });
+    const accepted = await app.inject({ method: "POST", url: "/api/admin/login", payload: { username: "admin", password: "very-secure-password", otp: totpCode(secret) } });
+    expect(accepted.statusCode).toBe(200);
+    expect(String(accepted.headers["set-cookie"])).toContain("Path=/");
+    expect(String(accepted.headers["set-cookie"])).toContain("SameSite=Lax");
+  });
+
   it("пускает второго администратора в режим наблюдения и передаёт ему управление после выхода первого", async () => {
     const first = await login();
     const second = await login();
@@ -326,6 +342,16 @@ describe("Undying Metro API", () => {
       escortPoolUah: "870.00",
     });
     expect(response.json().participants.map((item: any) => item.shareUah)).toEqual(["290.00", "290.00", "290.00"]);
+
+    const assignment = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/escort-orders/${response.json().id}/participants/${response.json().participants[0].id}/assignment`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { status: "accepted" },
+    });
+    expect(assignment.statusCode).toBe(200);
+    expect(assignment.json().participants[0].assignmentStatus).toBe("accepted");
+    expect(notifier.operations).toContain("escort_assignment_changed");
 
     const completed = await app.inject({
       method: "PATCH",

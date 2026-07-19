@@ -110,7 +110,7 @@ export async function buildApp(input: {
     .send("window.UNDYING_CONFIG = Object.freeze({ API_BASE_URL: window.location.origin });"));
 
   await registerPublicRoutes(app, { store, config, notifier });
-  await registerAdminRoutes(app, { store, config });
+  await registerAdminRoutes(app, { store, config, notifier });
 
   return app;
 }
