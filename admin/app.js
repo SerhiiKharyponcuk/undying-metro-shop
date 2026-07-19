@@ -46,7 +46,7 @@
       credentials: "include",
       ...options,
       headers: {
-        "content-type": "application/json",
+        ...(options.body !== undefined && options.body !== null ? { "content-type": "application/json" } : {}),
         ...(options.headers || {}),
         ...(options.method && options.method !== "GET" && csrfToken ? { "x-csrf-token": csrfToken } : {}),
       },
