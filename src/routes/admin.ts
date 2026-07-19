@@ -235,7 +235,12 @@ function csvCell(value: unknown): string {
   return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
 
-function sessionCookie(request: FastifyRequest): string {
+function sessionToken(request: FastifyRequest): string {
+  const authorization = request.headers.authorization;
+  if (typeof authorization === "string") {
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    if (match?.[1]) return match[1].trim();
+  }
   const signed = request.cookies[COOKIE_NAME];
   if (!signed) return "";
   const result = request.unsignCookie(signed);
@@ -249,7 +254,7 @@ export async function registerAdminRoutes(
   const { store, config, notifier } = dependencies;
 
   const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
-    const rawToken = sessionCookie(request);
+    const rawToken = sessionToken(request);
     if (!rawToken) return reply.code(401).send({ error: "Требуется вход администратора" });
     const session = await store.refreshAdminSession(sha256(rawToken), adminPresence());
     if (!session) {
@@ -306,12 +311,13 @@ export async function registerAdminRoutes(
       }
 
       const presence = adminPresence();
-      const existingToken = sessionCookie(request);
+      const existingToken = sessionToken(request);
       if (existingToken) {
         const existing = await store.refreshAdminSession(sha256(existingToken), presence);
         if (existing?.admin.id === admin.id) {
           return {
             admin: { id: admin.id, username: admin.username, role: admin.role },
+            sessionToken: existingToken,
             csrfToken: existing.csrfToken,
             expiresAt: existing.expiresAt,
             accessMode: existing.accessMode,
@@ -337,6 +343,7 @@ export async function registerAdminRoutes(
       });
       return {
         admin: { id: admin.id, username: admin.username, role: admin.role },
+        sessionToken: rawToken,
         csrfToken,
         expiresAt,
         accessMode: session.accessMode,
@@ -346,7 +353,7 @@ export async function registerAdminRoutes(
   );
 
   app.post("/api/admin/logout", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
-    const token = sessionCookie(request);
+    const token = sessionToken(request);
     if (token) await store.deleteAdminSession(sha256(token), adminPresence());
     reply.clearCookie(COOKIE_NAME, { path: "/" });
     return { success: true };

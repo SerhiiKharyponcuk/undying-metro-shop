@@ -44,7 +44,7 @@ export async function buildApp(input: {
   await app.register(cors, {
     credentials: true,
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["content-type", "x-csrf-token", "x-ticket-token"],
+    allowedHeaders: ["authorization", "content-type", "x-csrf-token", "x-ticket-token"],
     origin(origin, callback) {
       if (!origin) return callback(null, true);
       const normalized = origin.replace(/\/$/, "");

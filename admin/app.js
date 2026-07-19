@@ -7,7 +7,21 @@
   const adminApp = document.querySelector("#adminApp");
   const loginForm = document.querySelector("#loginForm");
   const globalStatus = document.querySelector("#globalStatus");
-  let csrfToken = sessionStorage.getItem("undying_admin_csrf") || "";
+
+  function storageGet(kind, key) {
+    try { return window[kind]?.getItem(key) || ""; } catch { return ""; }
+  }
+
+  function storageSet(kind, key, value) {
+    try { window[kind]?.setItem(key, value); } catch {}
+  }
+
+  function storageRemove(kind, key) {
+    try { window[kind]?.removeItem(key); } catch {}
+  }
+
+  let csrfToken = storageGet("sessionStorage", "undying_admin_csrf");
+  let adminAuthToken = storageGet("localStorage", "undying_admin_token");
   let activeTicketId = null;
   let accessMode = "observer";
   let currentRole = "observer";
@@ -47,6 +61,7 @@
       ...options,
       headers: {
         ...(options.body !== undefined && options.body !== null ? { "content-type": "application/json" } : {}),
+        ...(adminAuthToken ? { authorization: `Bearer ${adminAuthToken}` } : {}),
         ...(options.headers || {}),
         ...(options.method && options.method !== "GET" && csrfToken ? { "x-csrf-token": csrfToken } : {}),
       },
@@ -116,11 +131,18 @@
     document.querySelector("#loginStatus").textContent = message;
   }
 
+  function clearSession() {
+    csrfToken = "";
+    adminAuthToken = "";
+    storageRemove("sessionStorage", "undying_admin_csrf");
+    storageRemove("localStorage", "undying_admin_token");
+  }
+
   function showApp(dashboard) {
     loginView.hidden = true;
     adminApp.hidden = false;
     csrfToken = dashboard.csrfToken;
-    sessionStorage.setItem("undying_admin_csrf", csrfToken);
+    storageSet("sessionStorage", "undying_admin_csrf", csrfToken);
     document.querySelector("#adminUsername").textContent = dashboard.admin.username;
     currentRole = dashboard.admin.role || "admin";
     document.querySelector("#accountsTab").hidden = currentRole !== "owner";
@@ -157,7 +179,9 @@
       const payload = Object.fromEntries(new FormData(loginForm).entries());
       const result = await api("/api/admin/login", { method: "POST", body: JSON.stringify(payload) });
       csrfToken = result.csrfToken;
-      sessionStorage.setItem("undying_admin_csrf", csrfToken);
+      adminAuthToken = result.sessionToken || "";
+      storageSet("sessionStorage", "undying_admin_csrf", csrfToken);
+      if (adminAuthToken) storageSet("localStorage", "undying_admin_token", adminAuthToken);
       loginForm.reset();
       document.querySelector("#otpField").hidden = true;
       loginForm.elements.otp.required = false;
@@ -176,8 +200,7 @@
 
   document.querySelector("#logoutButton").addEventListener("click", async () => {
     try { await api("/api/admin/logout", { method: "POST", body: "{}" }); } catch {}
-    csrfToken = "";
-    sessionStorage.removeItem("undying_admin_csrf");
+    clearSession();
     showLogin();
   });
 
@@ -1020,7 +1043,7 @@
     csrfToken = dashboard.csrfToken;
     currentRole = dashboard.admin.role || "admin";
     document.querySelector("#accountsTab").hidden = currentRole !== "owner";
-    sessionStorage.setItem("undying_admin_csrf", csrfToken);
+    storageSet("sessionStorage", "undying_admin_csrf", csrfToken);
     const changed = applyAccessMode(dashboard.accessMode === "observer" || dashboard.canWrite === false ? "observer" : "operator");
     renderCounts(dashboard.counts);
     return changed;
@@ -1115,8 +1138,7 @@
       await refreshActiveSection();
     } catch (error) {
       if (error.status === 401) {
-        csrfToken = "";
-        sessionStorage.removeItem("undying_admin_csrf");
+        clearSession();
         showLogin("Сессия истекла");
       }
     } finally {

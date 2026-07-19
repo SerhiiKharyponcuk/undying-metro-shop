@@ -83,7 +83,7 @@ describe("Undying Metro API", () => {
     expect(response.statusCode).toBe(200);
     const body = response.json();
     const cookie = String(response.headers["set-cookie"]).split(";")[0];
-    return { cookie, csrf: body.csrfToken, accessMode: body.accessMode as "operator" | "observer" };
+    return { cookie, csrf: body.csrfToken, sessionToken: body.sessionToken as string, accessMode: body.accessMode as "operator" | "observer" };
   }
 
   async function seedCompletedPurchase(buyerGameId = "1234567890") {
@@ -224,6 +224,37 @@ describe("Undying Metro API", () => {
     expect(accepted.statusCode).toBe(200);
     expect(String(accepted.headers["set-cookie"])).toContain("Path=/");
     expect(String(accepted.headers["set-cookie"])).toContain("SameSite=Lax");
+  });
+
+  it("keeps an admin session through a bearer token when cookies are unavailable", async () => {
+    const authenticated = await login();
+    expect(authenticated.sessionToken).toBeTruthy();
+
+    const dashboard = await app.inject({
+      method: "GET",
+      url: "/api/admin/dashboard",
+      headers: { authorization: `Bearer ${authenticated.sessionToken}` },
+    });
+    expect(dashboard.statusCode).toBe(200);
+    expect(dashboard.json()).toMatchObject({ canWrite: true });
+
+    const logout = await app.inject({
+      method: "POST",
+      url: "/api/admin/logout",
+      headers: {
+        authorization: `Bearer ${authenticated.sessionToken}`,
+        "x-csrf-token": authenticated.csrf,
+      },
+      payload: {},
+    });
+    expect(logout.statusCode).toBe(200);
+
+    const expired = await app.inject({
+      method: "GET",
+      url: "/api/admin/dashboard",
+      headers: { authorization: `Bearer ${authenticated.sessionToken}` },
+    });
+    expect(expired.statusCode).toBe(401);
   });
 
   it("пускает второго администратора в режим наблюдения и передаёт ему управление после выхода первого", async () => {
