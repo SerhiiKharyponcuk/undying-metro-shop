@@ -171,6 +171,85 @@ describe("Undying Metro API", () => {
     expect(noCsrf.statusCode).toBe(403);
   });
 
+  it("создаёт расчёт сопровождения и делит гривны между тремя игроками", async () => {
+    const { cookie, csrf } = await login();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/escort-orders",
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: {
+        item: "Сопровождение Metro Royale",
+        buyerName: "Покупатель",
+        buyerContact: "@buyer_test",
+        amount: "1000.00",
+        currency: "UAH",
+        orderDate: "2026-07-19",
+        escorts: [
+          { name: "Игрок один", contact: "@player_one" },
+          { name: "Игрок два", contact: "@player_two" },
+          { name: "Игрок три", contact: "@player_three" },
+        ],
+      },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({
+      amountUah: "1000.00",
+      developerAmountUah: "100.00",
+      escortPoolUah: "900.00",
+    });
+    expect(response.json().participants.map((item: any) => item.shareUah)).toEqual(["300.00", "300.00", "300.00"]);
+  });
+
+  it("защищает расчёты сопровождений и ограничивает число игроков", async () => {
+    expect((await app.inject({ method: "GET", url: "/api/admin/escort-orders" })).statusCode).toBe(401);
+    const { cookie, csrf } = await login();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/escort-orders",
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: {
+        item: "Сопровождение",
+        buyerName: "Покупатель",
+        amount: "100",
+        currency: "UAH",
+        orderDate: "2026-07-19",
+        escorts: [1, 2, 3, 4].map((number) => ({ name: `Игрок ${number}` })),
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("возвращает курс гривны без внешнего запроса", async () => {
+    const { cookie } = await login();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/admin/exchange-rate?currency=UAH&date=2026-07-19",
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ currency: "UAH", date: "2026-07-19", rate: "1" });
+  });
+
+  it("позволяет отметить выплату сопровождающему", async () => {
+    const { cookie, csrf } = await login();
+    await app.inject({
+      method: "POST",
+      url: "/api/admin/escort-orders",
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { item: "Сопровождение", buyerName: "Покупатель", amount: "500", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок" }] },
+    });
+    const order = store.escortOrders[0]!;
+    const participant = order.participants[0]!;
+    const paid = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/escort-orders/${order.id}/participants/${participant.id}`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { paid: true },
+    });
+    expect(paid.statusCode).toBe(200);
+    expect(paid.json().participants[0].paid).toBe(true);
+  });
+
   it("создаёт заявку и разрешает доступ только с секретным токеном", async () => {
     const created = await app.inject({ method: "POST", url: "/api/support/tickets", payload: ticketPayload() });
     expect(created.statusCode).toBe(201);

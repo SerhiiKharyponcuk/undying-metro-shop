@@ -3,6 +3,8 @@ import type {
   AdminRecord,
   AdminSessionRecord,
   DashboardCounts,
+  EscortOrderRecord,
+  EscortOrderStatus,
   ManagerAvailabilityRecord,
   ManagerClaimResult,
   Page,
@@ -12,7 +14,7 @@ import type {
   SupportTicketRecord,
   TicketStatus,
 } from "../types/domain.js";
-import type { AppStore, NewReview, NewTicket } from "./store.js";
+import type { AppStore, NewEscortOrder, NewReview, NewTicket } from "./store.js";
 
 function mapAdmin(value: any): AdminRecord {
   return {
@@ -79,6 +81,36 @@ function mapTicket(value: any): SupportTicketRecord {
     updatedAt: value.updatedAt,
     assignedAdminId: value.assignedAdminId,
     messages: (value.messages ?? []).map(mapMessage),
+  };
+}
+
+function mapEscortOrder(value: any): EscortOrderRecord {
+  return {
+    id: value.id,
+    item: value.item,
+    buyerName: value.buyerName,
+    buyerContact: value.buyerContact,
+    originalAmountMinor: value.originalAmountMinor,
+    currency: value.currency,
+    exchangeRateMicros: value.exchangeRateMicros,
+    rateSource: value.rateSource,
+    amountUahMinor: value.amountUahMinor,
+    developerAmountMinor: value.developerAmountMinor,
+    escortPoolMinor: value.escortPoolMinor,
+    orderDate: value.orderDate,
+    status: value.status,
+    createdById: value.createdById,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    participants: (value.participants ?? []).map((participant: any) => ({
+      id: participant.id,
+      orderId: participant.orderId,
+      name: participant.name,
+      contact: participant.contact,
+      shareUahMinor: participant.shareUahMinor,
+      paid: participant.paid,
+      paidAt: participant.paidAt,
+    })),
   };
 }
 
@@ -229,6 +261,56 @@ export class PrismaStore implements AppStore {
         include: { messages: { orderBy: { createdAt: "asc" } } },
       }),
     );
+  }
+
+  async createEscortOrder(input: NewEscortOrder): Promise<EscortOrderRecord> {
+    const { participants, ...order } = input;
+    return mapEscortOrder(await this.prisma.escortOrder.create({
+      data: {
+        ...(order as any),
+        participants: { create: participants as any },
+      },
+      include: { participants: { orderBy: { createdAt: "asc" } } },
+    }));
+  }
+
+  async listEscortOrders(status: EscortOrderStatus | undefined, page: number, pageSize: number): Promise<Page<EscortOrderRecord>> {
+    const where = status ? { status: status as any } : {};
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.escortOrder.findMany({
+        where,
+        include: { participants: { orderBy: { createdAt: "asc" } } },
+        orderBy: [{ orderDate: "desc" }, { createdAt: "desc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.escortOrder.count({ where }),
+    ]);
+    return { items: items.map(mapEscortOrder), total, page, pageSize };
+  }
+
+  async updateEscortOrderStatus(id: string, status: EscortOrderStatus): Promise<EscortOrderRecord | null> {
+    const existing = await this.prisma.escortOrder.findUnique({ where: { id } });
+    if (!existing) return null;
+    return mapEscortOrder(await this.prisma.escortOrder.update({
+      where: { id },
+      data: { status: status as any },
+      include: { participants: { orderBy: { createdAt: "asc" } } },
+    }));
+  }
+
+  async updateEscortParticipantPaid(orderId: string, participantId: string, paid: boolean): Promise<EscortOrderRecord | null> {
+    const participant = await this.prisma.escortParticipant.findFirst({ where: { id: participantId, orderId } });
+    if (!participant) return null;
+    await this.prisma.escortParticipant.update({
+      where: { id: participantId },
+      data: { paid, paidAt: paid ? new Date() : null },
+    });
+    const order = await this.prisma.escortOrder.findUnique({
+      where: { id: orderId },
+      include: { participants: { orderBy: { createdAt: "asc" } } },
+    });
+    return order ? mapEscortOrder(order) : null;
   }
 
   async findAdminByUsername(username: string): Promise<AdminRecord | null> {

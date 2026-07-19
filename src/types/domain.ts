@@ -10,6 +10,9 @@ export type TicketCategory =
   | "other";
 export type MessageSender = "user" | "admin";
 export type NotificationState = "sent" | "failed" | "skipped";
+export type OrderCurrency = "UAH" | "EUR" | "USD";
+export type EscortOrderStatus = "planned" | "completed" | "paid" | "cancelled";
+export type ExchangeRateSource = "uah" | "nbu" | "manual";
 
 export interface AdminRecord {
   id: string;
@@ -91,4 +94,34 @@ export interface ManagerAvailabilityRecord {
 export interface ManagerClaimResult {
   claimed: boolean;
   busyUntil: Date;
+}
+
+export interface EscortParticipantRecord {
+  id: string;
+  orderId: string;
+  name: string;
+  contact: string | null;
+  shareUahMinor: bigint;
+  paid: boolean;
+  paidAt: Date | null;
+}
+
+export interface EscortOrderRecord {
+  id: string;
+  item: string;
+  buyerName: string;
+  buyerContact: string | null;
+  originalAmountMinor: bigint;
+  currency: OrderCurrency;
+  exchangeRateMicros: bigint;
+  rateSource: ExchangeRateSource;
+  amountUahMinor: bigint;
+  developerAmountMinor: bigint;
+  escortPoolMinor: bigint;
+  orderDate: Date;
+  status: EscortOrderStatus;
+  createdById: string;
+  createdAt: Date;
+  updatedAt: Date;
+  participants: EscortParticipantRecord[];
 }

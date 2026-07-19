@@ -3,6 +3,9 @@ import type {
   AdminSessionRecord,
   ContactType,
   DashboardCounts,
+  EscortOrderRecord,
+  EscortOrderStatus,
+  ExchangeRateSource,
   ManagerAvailabilityRecord,
   ManagerClaimResult,
   NotificationState,
@@ -13,6 +16,7 @@ import type {
   SupportTicketRecord,
   TicketCategory,
   TicketStatus,
+  OrderCurrency,
 } from "../types/domain.js";
 
 export interface NewReview {
@@ -36,6 +40,22 @@ export interface NewTicket {
   ipHash: string;
 }
 
+export interface NewEscortOrder {
+  item: string;
+  buyerName: string;
+  buyerContact: string | null;
+  originalAmountMinor: bigint;
+  currency: OrderCurrency;
+  exchangeRateMicros: bigint;
+  rateSource: ExchangeRateSource;
+  amountUahMinor: bigint;
+  developerAmountMinor: bigint;
+  escortPoolMinor: bigint;
+  orderDate: Date;
+  createdById: string;
+  participants: Array<{ name: string; contact: string | null; shareUahMinor: bigint }>;
+}
+
 export interface AppStore {
   getManagerAvailability(managerKeys: string[]): Promise<ManagerAvailabilityRecord[]>;
   claimManager(managerKey: string, now: Date, busyUntil: Date): Promise<ManagerClaimResult>;
@@ -55,6 +75,11 @@ export interface AppStore {
   addTicketMessage(ticketId: string, sender: "user" | "admin", message: string, adminId?: string): Promise<SupportMessageRecord>;
   listTickets(status: TicketStatus | undefined, query: string | undefined, page: number, pageSize: number): Promise<Page<SupportTicketRecord>>;
   updateTicketStatus(id: string, status: TicketStatus, assignedAdminId: string): Promise<SupportTicketRecord | null>;
+
+  createEscortOrder(input: NewEscortOrder): Promise<EscortOrderRecord>;
+  listEscortOrders(status: EscortOrderStatus | undefined, page: number, pageSize: number): Promise<Page<EscortOrderRecord>>;
+  updateEscortOrderStatus(id: string, status: EscortOrderStatus): Promise<EscortOrderRecord | null>;
+  updateEscortParticipantPaid(orderId: string, participantId: string, paid: boolean): Promise<EscortOrderRecord | null>;
 
   findAdminByUsername(username: string): Promise<AdminRecord | null>;
   createAdmin(username: string, passwordHash: string): Promise<AdminRecord>;

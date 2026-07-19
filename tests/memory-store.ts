@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { AppStore, NewReview, NewTicket } from "../src/store/store.js";
+import type { AppStore, NewEscortOrder, NewReview, NewTicket } from "../src/store/store.js";
 import type {
   AdminRecord,
   AdminSessionRecord,
   DashboardCounts,
+  EscortOrderRecord,
+  EscortOrderStatus,
   ManagerAvailabilityRecord,
   ManagerClaimResult,
   NotificationState,
@@ -20,6 +22,7 @@ export class MemoryStore implements AppStore {
   sessions: AdminSessionRecord[] = [];
   reviews: ReviewRecord[] = [];
   tickets: SupportTicketRecord[] = [];
+  escortOrders: EscortOrderRecord[] = [];
   notifications: Array<{ eventType: string; destination: string; status: NotificationState; error?: string }> = [];
   managerAvailability = new Map<string, Date>();
 
@@ -140,6 +143,51 @@ export class MemoryStore implements AppStore {
     ticket.assignedAdminId = assignedAdminId;
     ticket.updatedAt = new Date();
     return ticket;
+  }
+
+  async createEscortOrder(input: NewEscortOrder): Promise<EscortOrderRecord> {
+    const now = new Date();
+    const orderId = randomUUID();
+    const order: EscortOrderRecord = {
+      id: orderId,
+      ...input,
+      status: "planned",
+      createdAt: now,
+      updatedAt: now,
+      participants: input.participants.map((participant) => ({
+        id: randomUUID(),
+        orderId,
+        ...participant,
+        paid: false,
+        paidAt: null,
+      })),
+    };
+    this.escortOrders.push(order);
+    return order;
+  }
+
+  async listEscortOrders(status: EscortOrderStatus | undefined, page: number, pageSize: number): Promise<Page<EscortOrderRecord>> {
+    const values = status ? this.escortOrders.filter((order) => order.status === status) : this.escortOrders;
+    const ordered = [...values].sort((a, b) => b.orderDate.getTime() - a.orderDate.getTime());
+    return { items: ordered.slice((page - 1) * pageSize, page * pageSize), total: ordered.length, page, pageSize };
+  }
+
+  async updateEscortOrderStatus(id: string, status: EscortOrderStatus): Promise<EscortOrderRecord | null> {
+    const order = this.escortOrders.find((item) => item.id === id);
+    if (!order) return null;
+    order.status = status;
+    order.updatedAt = new Date();
+    return order;
+  }
+
+  async updateEscortParticipantPaid(orderId: string, participantId: string, paid: boolean): Promise<EscortOrderRecord | null> {
+    const order = this.escortOrders.find((item) => item.id === orderId);
+    const participant = order?.participants.find((item) => item.id === participantId);
+    if (!order || !participant) return null;
+    participant.paid = paid;
+    participant.paidAt = paid ? new Date() : null;
+    order.updatedAt = new Date();
+    return order;
   }
 
   async findAdminByUsername(username: string): Promise<AdminRecord | null> {

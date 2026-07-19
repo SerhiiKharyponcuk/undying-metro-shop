@@ -23,6 +23,15 @@
     complaint: "Жалоба",
     other: "Другое",
   };
+  const escortStatuses = {
+    planned: "Запланировано",
+    completed: "Завершено",
+    paid: "Выплачено",
+    cancelled: "Отменено",
+  };
+  const escortForm = document.querySelector("#escortForm");
+  const escortPeople = document.querySelector("#escortPeople");
+  let rateWasLoadedFromNbu = false;
 
   function endpoint(path) {
     if (!apiBase) throw new Error("Сервис временно недоступен. Попробуйте немного позже.");
@@ -93,7 +102,7 @@
     try {
       const dashboard = await api("/api/admin/dashboard", { method: "GET" });
       showApp(dashboard);
-      await Promise.all([loadReviews(), loadTickets()]);
+      await Promise.all([loadReviews(), loadTickets(), loadEscortOrders()]);
     } catch (error) {
       showLogin(error.status === 401 ? "" : error.message);
     }
@@ -138,6 +147,216 @@
       section.classList.toggle("is-active", active);
     });
   }
+
+  function money(value) {
+    const amount = Number(String(value || "0").replace(",", "."));
+    return Number.isFinite(amount) ? `${amount.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₴` : "0,00 ₴";
+  }
+
+  function addEscortRow(name = "", contact = "") {
+    if (escortPeople.children.length >= 3) return;
+    const row = document.createElement("div");
+    row.className = "escort-person";
+    const number = document.createElement("b");
+    const nameLabel = document.createElement("label");
+    nameLabel.innerHTML = "<span>Имя игрока</span>";
+    const nameInput = document.createElement("input");
+    nameInput.name = "escortName";
+    nameInput.minLength = 2;
+    nameInput.maxLength = 64;
+    nameInput.required = true;
+    nameInput.value = name;
+    nameLabel.append(nameInput);
+    const contactLabel = document.createElement("label");
+    contactLabel.innerHTML = "<span>Telegram / контакт</span>";
+    const contactInput = document.createElement("input");
+    contactInput.name = "escortContact";
+    contactInput.maxLength = 128;
+    contactInput.value = contact;
+    contactLabel.append(contactInput);
+    const remove = document.createElement("button");
+    remove.className = "escort-remove";
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", "Удалить игрока");
+    remove.addEventListener("click", () => {
+      if (escortPeople.children.length <= 1) return;
+      row.remove();
+      renumberEscorts();
+      updateEscortPreview();
+    });
+    row.append(number, nameLabel, contactLabel, remove);
+    escortPeople.append(row);
+    renumberEscorts();
+    updateEscortPreview();
+  }
+
+  function renumberEscorts() {
+    [...escortPeople.children].forEach((row, index) => { row.querySelector("b").textContent = String(index + 1); });
+    document.querySelector("#addEscort").disabled = escortPeople.children.length >= 3;
+  }
+
+  function updateEscortPreview() {
+    const amount = Number(String(escortForm.elements.amount.value || "0").replace(",", "."));
+    const rate = Number(String(escortForm.elements.exchangeRate.value || "0").replace(",", "."));
+    const total = Number.isFinite(amount * rate) ? Math.round(amount * rate * 100) / 100 : 0;
+    const developer = Math.round(total * 10) / 100;
+    const pool = Math.round((total - developer) * 100) / 100;
+    const share = escortPeople.children.length ? Math.floor((pool / escortPeople.children.length) * 100) / 100 : 0;
+    document.querySelector("#previewTotal").textContent = money(total);
+    document.querySelector("#previewDeveloper").textContent = money(developer);
+    document.querySelector("#previewPool").textContent = money(pool);
+    document.querySelector("#previewShare").textContent = money(share);
+  }
+
+  async function loadNbuRate() {
+    const currency = escortForm.elements.currency.value;
+    const date = escortForm.elements.orderDate.value;
+    const status = document.querySelector("#escortFormStatus");
+    if (currency === "UAH") {
+      escortForm.elements.exchangeRate.value = "1";
+      rateWasLoadedFromNbu = false;
+      updateEscortPreview();
+      return;
+    }
+    if (!date) return;
+    status.textContent = "Получаем официальный курс НБУ…";
+    try {
+      const result = await api(`/api/admin/exchange-rate?currency=${encodeURIComponent(currency)}&date=${encodeURIComponent(date)}`, { method: "GET" });
+      escortForm.elements.exchangeRate.value = result.rate;
+      rateWasLoadedFromNbu = true;
+      status.textContent = `Курс НБУ: 1 ${currency} = ${result.rate} ₴`;
+      updateEscortPreview();
+    } catch (error) {
+      rateWasLoadedFromNbu = false;
+      status.textContent = `${error.message}. Курс можно указать вручную.`;
+    }
+  }
+
+  document.querySelector("#addEscort").addEventListener("click", () => addEscortRow());
+  document.querySelector("#loadNbuRate").addEventListener("click", () => void loadNbuRate());
+  escortForm.elements.currency.addEventListener("change", () => {
+    const foreign = escortForm.elements.currency.value !== "UAH";
+    document.querySelector("#loadNbuRate").disabled = !foreign;
+    escortForm.elements.exchangeRate.readOnly = !foreign;
+    if (!foreign) {
+      escortForm.elements.exchangeRate.value = "1";
+      rateWasLoadedFromNbu = false;
+      updateEscortPreview();
+    } else {
+      void loadNbuRate();
+    }
+  });
+  escortForm.elements.orderDate.addEventListener("change", () => {
+    if (escortForm.elements.currency.value !== "UAH") void loadNbuRate();
+  });
+  escortForm.elements.amount.addEventListener("input", updateEscortPreview);
+  escortForm.elements.exchangeRate.addEventListener("input", () => { rateWasLoadedFromNbu = false; updateEscortPreview(); });
+
+  escortForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const status = document.querySelector("#escortFormStatus");
+    status.textContent = "";
+    busy(escortForm, true);
+    try {
+      const escorts = [...escortPeople.children].map((row) => ({
+        name: row.querySelector('[name="escortName"]').value,
+        contact: row.querySelector('[name="escortContact"]').value,
+      }));
+      const payload = {
+        item: escortForm.elements.item.value,
+        buyerName: escortForm.elements.buyerName.value,
+        buyerContact: escortForm.elements.buyerContact.value,
+        amount: escortForm.elements.amount.value,
+        currency: escortForm.elements.currency.value,
+        exchangeRate: rateWasLoadedFromNbu ? "" : escortForm.elements.exchangeRate.value,
+        orderDate: escortForm.elements.orderDate.value,
+        escorts,
+      };
+      await api("/api/admin/escort-orders", { method: "POST", body: JSON.stringify(payload) });
+      status.textContent = "Расчёт сопровождения сохранён";
+      escortForm.reset();
+      escortForm.elements.orderDate.value = new Date().toISOString().slice(0, 10);
+      escortForm.elements.exchangeRate.value = "1";
+      escortForm.elements.exchangeRate.readOnly = true;
+      document.querySelector("#loadNbuRate").disabled = true;
+      rateWasLoadedFromNbu = false;
+      escortPeople.replaceChildren();
+      addEscortRow();
+      await loadEscortOrders();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      busy(escortForm, false);
+    }
+  });
+
+  function escortOrderElement(order) {
+    const article = document.createElement("article");
+    article.className = "escort-order";
+    const head = document.createElement("div");
+    head.className = "escort-order__head";
+    const heading = document.createElement("div");
+    const title = document.createElement("h3");
+    title.textContent = order.item;
+    const meta = document.createElement("p");
+    meta.textContent = `${order.buyerName}${order.buyerContact ? ` • ${order.buyerContact}` : ""} • ${new Date(order.orderDate).toLocaleDateString("ru-RU")}`;
+    heading.append(title, meta);
+    const statusSelect = document.createElement("select");
+    Object.entries(escortStatuses).forEach(([value, label]) => {
+      const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = order.status === value; statusSelect.append(option);
+    });
+    statusSelect.addEventListener("change", async () => {
+      try { await api(`/api/admin/escort-orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: statusSelect.value }) }); await loadEscortOrders(); }
+      catch (error) { globalStatus.textContent = error.message; }
+    });
+    head.append(heading, statusSelect);
+    const values = document.createElement("div");
+    values.className = "escort-order__money";
+    [
+      ["Оплачено", `${order.originalAmount} ${order.currency}`],
+      ["В гривне", money(order.amountUah)],
+      ["Разработчику 10%", money(order.developerAmountUah)],
+      ["Игрокам", money(order.escortPoolUah)],
+    ].forEach(([label, value]) => {
+      const box = document.createElement("span"); const small = document.createElement("small"); small.textContent = label; const strong = document.createElement("strong"); strong.textContent = value; box.append(small, strong); values.append(box);
+    });
+    const players = document.createElement("div");
+    players.className = "escort-order__players";
+    order.participants.forEach((player) => {
+      const row = document.createElement("div"); row.className = "escort-player";
+      const person = document.createElement("span"); const name = document.createElement("strong"); name.textContent = player.name; const note = document.createElement("small"); note.textContent = `${player.contact || "Без контакта"} • ${money(player.shareUah)}`; person.append(name, note);
+      const label = document.createElement("label"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = player.paid; const text = document.createElement("span"); text.textContent = player.paid ? "Выплачено" : "Отметить выплату"; label.append(checkbox, text);
+      checkbox.addEventListener("change", async () => {
+        checkbox.disabled = true;
+        try { await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}`, { method: "PATCH", body: JSON.stringify({ paid: checkbox.checked }) }); await loadEscortOrders(); }
+        catch (error) { checkbox.checked = !checkbox.checked; checkbox.disabled = false; globalStatus.textContent = error.message; }
+      });
+      row.append(person, label); players.append(row);
+    });
+    article.append(head, values, players);
+    return article;
+  }
+
+  async function loadEscortOrders() {
+    const container = document.querySelector("#escortOrders");
+    container.replaceChildren(empty("Загрузка…", "Получаем историю сопровождений"));
+    try {
+      const status = document.querySelector("#escortFilter").value;
+      const result = await api(`/api/admin/escort-orders?status=${encodeURIComponent(status)}&page=1&pageSize=50`, { method: "GET" });
+      container.replaceChildren();
+      document.querySelector("#escortHistoryTotal").textContent = `Записей: ${result.total}`;
+      if (!result.items.length) container.append(empty("Сопровождений пока нет", "Создайте первый расчёт выше."));
+      result.items.forEach((order) => container.append(escortOrderElement(order)));
+    } catch (error) {
+      container.replaceChildren(empty("Ошибка загрузки", error.message));
+    }
+  }
+
+  document.querySelector("#escortFilter").addEventListener("change", () => void loadEscortOrders());
+  escortForm.elements.orderDate.value = new Date().toISOString().slice(0, 10);
+  escortForm.elements.exchangeRate.readOnly = true;
+  addEscortRow();
 
   function reviewElement(review) {
     const article = document.createElement("article");
@@ -306,7 +525,7 @@
 
   async function refreshAll() {
     globalStatus.textContent = "";
-    await Promise.all([refreshDashboard(), loadReviews(), loadTickets()]);
+    await Promise.all([refreshDashboard(), loadReviews(), loadTickets(), loadEscortOrders()]);
     if (activeTicketId) await loadTicketDetail(activeTicketId);
   }
 
@@ -323,6 +542,10 @@
       activateTab("reviews");
       const review = [...document.querySelectorAll("[data-review-id]")].find((item) => item.dataset.reviewId === id);
       review?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    if (section === "escorts") {
+      activateTab("escorts");
     }
   }
 

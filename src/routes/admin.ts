@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
+import { calculateEscortSplit, formatMinor, formatRate, parseMoneyToMinor, parseRateToMicros } from "../lib/escort-calculation.js";
+import { getOfficialNbuRate } from "../lib/nbu.js";
 import { cleanPlainText, constantTimeEqual, containsMarkup, hashSecret, randomToken, sha256, verifySecret } from "../lib/security.js";
 import type { AppStore } from "../store/store.js";
 
@@ -32,6 +34,63 @@ const ticketQuery = z.object({
 const idParams = z.object({ id: z.string().uuid() });
 const ticketStatusBody = z.object({ status: z.enum(["open", "in_progress", "waiting_user", "closed"]) });
 const messageBody = z.object({ message: plainText(2, 3000) });
+const scalarText = z.union([z.string(), z.number()]).transform((value) => String(value).trim());
+const orderDateValue = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const escortOrderBody = z.object({
+  item: plainText(2, 160),
+  buyerName: plainText(2, 64),
+  buyerContact: z.union([plainText(3, 128), z.literal("")]).optional().default(""),
+  amount: scalarText,
+  currency: z.enum(["UAH", "EUR", "USD"]),
+  exchangeRate: z.union([scalarText, z.literal("")]).optional().default(""),
+  orderDate: orderDateValue,
+  escorts: z.array(z.object({
+    name: plainText(2, 64),
+    contact: z.union([plainText(3, 128), z.literal("")]).optional().default(""),
+  })).min(1).max(3),
+});
+const escortOrderQuery = z.object({
+  status: z.preprocess(optionalQueryValue, z.enum(["planned", "completed", "paid", "cancelled"]).optional()),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(30),
+});
+const escortStatusBody = z.object({ status: z.enum(["planned", "completed", "paid", "cancelled"]) });
+const participantPaidBody = z.object({ paid: z.boolean() });
+const participantParams = z.object({ id: z.string().uuid(), participantId: z.string().uuid() });
+const rateQuery = z.object({ currency: z.enum(["UAH", "EUR", "USD"]), date: orderDateValue });
+
+function orderDate(value: string): Date | null {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? null : date;
+}
+
+function serializeEscortOrder(order: any) {
+  return {
+    id: order.id,
+    item: order.item,
+    buyerName: order.buyerName,
+    buyerContact: order.buyerContact,
+    originalAmount: formatMinor(order.originalAmountMinor),
+    currency: order.currency,
+    exchangeRate: formatRate(order.exchangeRateMicros),
+    rateSource: order.rateSource,
+    amountUah: formatMinor(order.amountUahMinor),
+    developerAmountUah: formatMinor(order.developerAmountMinor),
+    escortPoolUah: formatMinor(order.escortPoolMinor),
+    orderDate: order.orderDate,
+    status: order.status,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    participants: order.participants.map((participant: any) => ({
+      id: participant.id,
+      name: participant.name,
+      contact: participant.contact,
+      shareUah: formatMinor(participant.shareUahMinor),
+      paid: participant.paid,
+      paidAt: participant.paidAt,
+    })),
+  };
+}
 
 function sessionCookie(request: FastifyRequest): string {
   const signed = request.cookies[COOKIE_NAME];
@@ -109,6 +168,87 @@ export async function registerAdminRoutes(
     csrfToken: request.adminAuth!.session.csrfToken,
     counts: await store.dashboardCounts(),
   }));
+
+  app.get("/api/admin/exchange-rate", { preHandler: requireAdmin }, async (request, reply) => {
+    const parsed = rateQuery.safeParse(request.query);
+    if (!parsed.success || !orderDate(parsed.data.date)) return reply.code(400).send({ error: "Проверьте валюту и дату" });
+    try {
+      const rate = await getOfficialNbuRate(parsed.data.currency, parsed.data.date);
+      return { currency: parsed.data.currency, date: parsed.data.date, rate: formatRate(parseRateToMicros(rate)) };
+    } catch (error) {
+      return reply.code(503).send({ error: error instanceof Error ? error.message : "Не удалось получить курс НБУ" });
+    }
+  });
+
+  app.get("/api/admin/escort-orders", { preHandler: requireAdmin }, async (request, reply) => {
+    const parsed = escortOrderQuery.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Некорректные параметры" });
+    const page = await store.listEscortOrders(parsed.data.status, parsed.data.page, parsed.data.pageSize);
+    return { ...page, items: page.items.map(serializeEscortOrder) };
+  });
+
+  app.post("/api/admin/escort-orders", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+    const parsed = escortOrderBody.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте данные сопровождения" });
+    const date = orderDate(parsed.data.orderDate);
+    if (!date) return reply.code(400).send({ error: "Укажите корректную дату" });
+
+    try {
+      const originalAmountMinor = parseMoneyToMinor(parsed.data.amount);
+      let rateSource: "uah" | "nbu" | "manual" = "uah";
+      let rate = 1;
+      if (parsed.data.currency !== "UAH") {
+        if (parsed.data.exchangeRate) {
+          rate = Number(parsed.data.exchangeRate.replace(",", "."));
+          rateSource = "manual";
+        } else {
+          rate = await getOfficialNbuRate(parsed.data.currency, parsed.data.orderDate);
+          rateSource = "nbu";
+        }
+      }
+      const exchangeRateMicros = parseRateToMicros(rate);
+      const calculation = calculateEscortSplit(originalAmountMinor, exchangeRateMicros, parsed.data.escorts.length);
+      const order = await store.createEscortOrder({
+        item: parsed.data.item,
+        buyerName: parsed.data.buyerName,
+        buyerContact: parsed.data.buyerContact || null,
+        originalAmountMinor,
+        currency: parsed.data.currency,
+        exchangeRateMicros,
+        rateSource,
+        amountUahMinor: calculation.amountUahMinor,
+        developerAmountMinor: calculation.developerAmountMinor,
+        escortPoolMinor: calculation.escortPoolMinor,
+        orderDate: date,
+        createdById: request.adminAuth!.admin.id,
+        participants: parsed.data.escorts.map((escort, index) => ({
+          name: escort.name,
+          contact: escort.contact || null,
+          shareUahMinor: calculation.shares[index]!,
+        })),
+      });
+      return reply.code(201).send(serializeEscortOrder(order));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось рассчитать сопровождение";
+      return reply.code(message.includes("НБУ") ? 503 : 400).send({ error: message });
+    }
+  });
+
+  app.patch("/api/admin/escort-orders/:id/status", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    const body = escortStatusBody.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте статус" });
+    const order = await store.updateEscortOrderStatus(params.data.id, body.data.status);
+    return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Сопровождение не найдено" });
+  });
+
+  app.patch("/api/admin/escort-orders/:id/participants/:participantId", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+    const params = participantParams.safeParse(request.params);
+    const body = participantPaidBody.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте данные выплаты" });
+    const order = await store.updateEscortParticipantPaid(params.data.id, params.data.participantId, body.data.paid);
+    return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
+  });
 
   app.get("/api/admin/reviews", { preHandler: requireAdmin }, async (request, reply) => {
     const parsed = reviewQuery.safeParse(request.query);

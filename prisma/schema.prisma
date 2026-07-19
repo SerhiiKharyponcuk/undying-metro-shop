@@ -45,6 +45,25 @@ enum NotificationStatus {
   skipped
 }
 
+enum OrderCurrency {
+  UAH
+  EUR
+  USD
+}
+
+enum EscortOrderStatus {
+  planned
+  completed
+  paid
+  cancelled
+}
+
+enum ExchangeRateSource {
+  uah
+  nbu
+  manual
+}
+
 model Admin {
   id             String           @id @default(uuid())
   username       String           @unique @db.VarChar(64)
@@ -56,8 +75,49 @@ model Admin {
   moderated      Review[]         @relation("ReviewModerator")
   assigned       SupportTicket[]  @relation("TicketAssignee")
   supportReplies SupportMessage[] @relation("MessageAdmin")
+  escortOrders   EscortOrder[]    @relation("EscortOrderCreator")
 
   @@map("admins")
+}
+
+model EscortOrder {
+  id                     String             @id @default(uuid())
+  item                   String             @db.VarChar(160)
+  buyerName              String             @map("buyer_name") @db.VarChar(64)
+  buyerContact           String?            @map("buyer_contact") @db.VarChar(128)
+  originalAmountMinor    BigInt             @map("original_amount_minor")
+  currency               OrderCurrency
+  exchangeRateMicros     BigInt             @map("exchange_rate_micros")
+  rateSource             ExchangeRateSource @map("rate_source")
+  amountUahMinor         BigInt             @map("amount_uah_minor")
+  developerAmountMinor  BigInt             @map("developer_amount_minor")
+  escortPoolMinor        BigInt             @map("escort_pool_minor")
+  orderDate              DateTime           @map("order_date") @db.Date
+  status                 EscortOrderStatus  @default(planned)
+  createdById            String             @map("created_by_id")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+  createdBy              Admin              @relation("EscortOrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  participants           EscortParticipant[]
+
+  @@index([status, orderDate])
+  @@index([createdById])
+  @@map("escort_orders")
+}
+
+model EscortParticipant {
+  id            String      @id @default(uuid())
+  orderId       String      @map("order_id")
+  name          String      @db.VarChar(64)
+  contact       String?     @db.VarChar(128)
+  shareUahMinor BigInt      @map("share_uah_minor")
+  paid          Boolean     @default(false)
+  paidAt        DateTime?   @map("paid_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  order         EscortOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("escort_participants")
 }
 
 model AdminSession {

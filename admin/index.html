@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#05090b" />
     <title>Undying Metro — Админ-панель</title>
     <link rel="icon" href="../assets/undying-metro-avatar.webp" type="image/webp" />
-    <link rel="stylesheet" href="styles.css?v=5" />
-    <script src="../config.js?v=5"></script>
+    <link rel="stylesheet" href="styles.css?v=7" />
+    <script src="../config.js?v=7"></script>
   </head>
   <body>
     <div class="admin-world" aria-hidden="true"><span></span><span></span></div>
@@ -38,7 +38,7 @@
 
       <main class="admin-main">
         <section class="admin-heading">
-          <div><small>ОПЕРАТИВНЫЙ ЦЕНТР</small><h1>Управление магазином</h1><p>Отзывы, обращения и ответы пользователям.</p></div>
+          <div><small>ОПЕРАТИВНЫЙ ЦЕНТР</small><h1>Управление магазином</h1><p>Отзывы, поддержка и расчёты сопровождений.</p></div>
           <button class="refresh-button" id="refreshButton" type="button">↻ Обновить</button>
         </section>
 
@@ -52,6 +52,7 @@
         <nav class="admin-tabs">
           <button class="is-active" type="button" data-admin-tab="reviews">Отзывы <b id="reviewBadge">0</b></button>
           <button type="button" data-admin-tab="tickets">Поддержка <b id="ticketBadge">0</b></button>
+          <button type="button" data-admin-tab="escorts">Сопроводы</button>
         </nav>
 
         <section class="admin-section is-active" data-admin-section="reviews">
@@ -77,10 +78,45 @@
             </aside>
           </div>
         </section>
+
+        <section class="admin-section escort-section" data-admin-section="escorts" hidden>
+          <div class="section-toolbar">
+            <div><h2>Новое сопровождение</h2><p>10% разработчику, остаток автоматически делится между сопровождающими.</p></div>
+            <label><span>История</span><select id="escortFilter"><option value="">Все статусы</option><option value="planned">Запланировано</option><option value="completed">Завершено</option><option value="paid">Выплачено</option><option value="cancelled">Отменено</option></select></label>
+          </div>
+
+          <form class="escort-form" id="escortForm">
+            <div class="escort-fields">
+              <label><span>Что купили</span><input name="item" minlength="2" maxlength="160" placeholder="Например: сопровождение Metro Royale" required /></label>
+              <label><span>Покупатель</span><input name="buyerName" minlength="2" maxlength="64" required /></label>
+              <label><span>Контакт покупателя</span><input name="buyerContact" maxlength="128" placeholder="@username — необязательно" /></label>
+              <label><span>Дата</span><input name="orderDate" type="date" required /></label>
+              <label><span>Сумма оплаты</span><input name="amount" inputmode="decimal" placeholder="1000.00" required /></label>
+              <label><span>Валюта оплаты</span><select name="currency"><option value="UAH">UAH — гривна</option><option value="EUR">EUR — евро</option><option value="USD">USD — доллар</option></select></label>
+              <label class="rate-field"><span>Курс к гривне</span><input name="exchangeRate" inputmode="decimal" value="1" required /></label>
+              <button class="rate-button" id="loadNbuRate" type="button" disabled>Получить курс НБУ</button>
+            </div>
+
+            <div class="escort-people-head"><span><strong>Сопровождающие</strong><small>От одного до трёх игроков</small></span><button id="addEscort" type="button">+ Добавить игрока</button></div>
+            <div class="escort-people" id="escortPeople"></div>
+
+            <div class="escort-preview" id="escortPreview">
+              <span><small>Всего в гривне</small><strong id="previewTotal">0,00 ₴</strong></span>
+              <span class="escort-preview__developer"><small>Разработчику 10%</small><strong id="previewDeveloper">0,00 ₴</strong></span>
+              <span><small>Сопровождающим</small><strong id="previewPool">0,00 ₴</strong></span>
+              <span><small>Каждому</small><strong id="previewShare">0,00 ₴</strong></span>
+            </div>
+            <p class="admin-status" id="escortFormStatus" role="status"></p>
+            <button class="admin-primary escort-submit" type="submit"><span>Сохранить расчёт</span><i></i></button>
+          </form>
+
+          <div class="escort-history-head"><h2>История сопровождений</h2><small id="escortHistoryTotal"></small></div>
+          <div class="escort-orders" id="escortOrders"></div>
+        </section>
         <p class="global-status" id="globalStatus" role="status"></p>
       </main>
     </div>
 
-    <script src="app.js?v=5"></script>
+    <script src="app.js?v=7"></script>
   </body>
 </html>
