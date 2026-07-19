@@ -7,6 +7,7 @@ import type {
   DashboardCounts,
   EscortOrderRecord,
   EscortOrderStatus,
+  EscortPenaltyListRecord,
   EscortPlayerProfileRecord,
   FinancialSummary,
   ManagerAvailabilityRecord,
@@ -120,6 +121,27 @@ function mapPlayerProfile(value: any): EscortPlayerProfileRecord {
     penaltyCount: value._count?.penalties,
     earnedUahMinor: value.earnedUahMinor,
     withheldUahMinor: value.withheldUahMinor,
+  };
+}
+
+function mapPenaltyList(value: any): EscortPenaltyListRecord {
+  return {
+    id: value.id,
+    participantId: value.participantId,
+    playerProfileId: value.playerProfileId,
+    sequence: value.sequence,
+    violationDate: value.violationDate,
+    percentage: value.percentage,
+    amountUahMinor: value.amountUahMinor,
+    reason: value.reason,
+    createdById: value.createdById,
+    createdAt: value.createdAt,
+    participantName: value.participant.name,
+    playerGameId: value.participant.playerProfile?.gameId ?? null,
+    orderId: value.participant.order.id,
+    orderItem: value.participant.order.item,
+    buyerName: value.participant.order.buyerName,
+    createdByUsername: value.createdBy.username,
   };
 }
 
@@ -461,7 +483,7 @@ export class PrismaStore implements AppStore {
   }
 
   async listEscortOrders(status: EscortOrderStatus | undefined, page: number, pageSize: number): Promise<Page<EscortOrderRecord>> {
-    const where = status ? { status: status as any } : {};
+    const where = status ? { status: status as any } : { status: { not: "cancelled" as const } };
     const [items, total] = await this.prisma.$transaction([
       this.prisma.escortOrder.findMany({
         where,
@@ -615,6 +637,140 @@ export class PrismaStore implements AppStore {
       return database.escortOrder.findUnique({ where: { id: orderId }, include: escortOrderInclude });
     }, { isolationLevel: "Serializable" });
     return order ? mapEscortOrder(order) : null;
+  }
+
+  async listEscortPenalties(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPenaltyListRecord>> {
+    const where = query ? {
+      OR: [
+        { reason: { contains: query, mode: "insensitive" as const } },
+        { participant: { is: { name: { contains: query, mode: "insensitive" as const } } } },
+        { participant: { is: { playerProfile: { is: { gameId: { contains: query, mode: "insensitive" as const } } } } } },
+        { participant: { is: { order: { is: { item: { contains: query, mode: "insensitive" as const } } } } } },
+        { participant: { is: { order: { is: { buyerName: { contains: query, mode: "insensitive" as const } } } } } },
+      ],
+    } : {};
+    const include = {
+      participant: { include: { playerProfile: true, order: true } },
+      createdBy: true,
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.escortPenalty.findMany({
+        where,
+        include,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.escortPenalty.count({ where }),
+    ]);
+    return { items: items.map(mapPenaltyList), total, page, pageSize };
+  }
+
+  async deleteEscortPenalty(id: string): Promise<EscortPenaltyListRecord | null> {
+    const deleted = await this.prisma.$transaction(async (database) => {
+      const penalty = await database.escortPenalty.findUnique({
+        where: { id },
+        include: {
+          participant: { include: { playerProfile: true, order: true } },
+          createdBy: true,
+        },
+      });
+      if (!penalty) return null;
+      if (penalty.participant.paid) throw new Error("Сначала снимите отметку о выплате игроку");
+
+      const violationDate = penalty.violationDate
+        ?? new Date(Date.UTC(penalty.createdAt.getUTCFullYear(), penalty.createdAt.getUTCMonth(), penalty.createdAt.getUTCDate()));
+      const nextDate = new Date(violationDate.getTime() + 24 * 60 * 60 * 1000);
+      await database.escortPenalty.delete({ where: { id } });
+
+      const dayWhere = {
+        ...(penalty.playerProfileId ? { playerProfileId: penalty.playerProfileId } : { participantId: penalty.participantId }),
+        OR: [
+          { violationDate: { gte: violationDate, lt: nextDate } },
+          { violationDate: null, createdAt: { gte: violationDate, lt: nextDate } },
+        ],
+      };
+      const remaining = await database.escortPenalty.findMany({
+        where: dayWhere,
+        include: { participant: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      if (remaining.some((item: any) => item.participant.paid)) {
+        throw new Error("Сначала снимите отметку о выплате у всех затронутых игроков");
+      }
+      const remainingIds = remaining.map((item: any) => item.id);
+      for (let index = 0; index < remaining.length; index += 1) {
+        await database.escortPenalty.update({ where: { id: remaining[index]!.id }, data: { sequence: -(index + 1) } });
+      }
+
+      const withheldByParticipant = new Map<string, bigint>();
+      for (const item of remaining) {
+        if (!withheldByParticipant.has(item.participantId)) {
+          const other = await database.escortPenalty.aggregate({
+            where: { participantId: item.participantId, id: { notIn: remainingIds } },
+            _sum: { amountUahMinor: true },
+          });
+          withheldByParticipant.set(item.participantId, other._sum.amountUahMinor ?? 0n);
+        }
+      }
+      for (let index = 0; index < remaining.length; index += 1) {
+        const item = remaining[index]!;
+        const sequence = index + 1;
+        const calculated = sequence <= 4
+          ? calculatePenaltyAmount(item.participant.shareUahMinor, sequence)
+          : { percentage: 0, amountUahMinor: 0n };
+        const alreadyWithheld = withheldByParticipant.get(item.participantId) ?? 0n;
+        const available = item.participant.shareUahMinor - alreadyWithheld;
+        const amountUahMinor = available <= 0n ? 0n : calculated.amountUahMinor > available ? available : calculated.amountUahMinor;
+        withheldByParticipant.set(item.participantId, alreadyWithheld + amountUahMinor);
+        await database.escortPenalty.update({
+          where: { id: item.id },
+          data: { sequence, percentage: calculated.percentage, amountUahMinor },
+        });
+      }
+
+      if (penalty.playerProfileId) {
+        const allProfilePenalties = await database.escortPenalty.findMany({
+          where: { playerProfileId: penalty.playerProfileId },
+          orderBy: [{ violationDate: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+        });
+        const grouped = new Map<string, typeof allProfilePenalties>();
+        for (const item of allProfilePenalties) {
+          const key = (item.violationDate ?? item.createdAt).toISOString().slice(0, 10);
+          grouped.set(key, [...(grouped.get(key) ?? []), item]);
+        }
+        const permanentlyBanned = [...grouped.values()].some((items) => items.length >= 5);
+        const now = new Date();
+        const suspensionCandidates = [...grouped.values()]
+          .filter((items) => items.length >= 4)
+          .map((items) => new Date(items[3]!.createdAt.getTime() + 24 * 60 * 60 * 1000))
+          .filter((value) => value > now)
+          .sort((left, right) => right.getTime() - left.getTime());
+        const suspendedUntil = permanentlyBanned ? null : suspensionCandidates[0] ?? null;
+        await database.escortPlayerProfile.update({
+          where: { id: penalty.playerProfileId },
+          data: {
+            permanentlyBanned,
+            bannedAt: permanentlyBanned ? penalty.participant.playerProfile?.bannedAt ?? now : null,
+            suspendedUntil,
+          },
+        });
+        const restricted = permanentlyBanned || Boolean(suspendedUntil);
+        await database.escortParticipant.updateMany({
+          where: { playerProfileId: penalty.playerProfileId, replacedAt: null },
+          data: { active: !restricted, excludedAt: restricted ? now : null },
+        });
+      } else {
+        const restricted = remaining.length >= 4;
+        await database.escortParticipant.update({
+          where: { id: penalty.participantId },
+          data: { active: !restricted, excludedAt: restricted ? penalty.participant.excludedAt ?? new Date() : null },
+        });
+      }
+
+      return penalty;
+    }, { isolationLevel: "Serializable" });
+    return deleted ? mapPenaltyList(deleted) : null;
   }
 
   async listEscortPlayerProfiles(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPlayerProfileRecord>> {

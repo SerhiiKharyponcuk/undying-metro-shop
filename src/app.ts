@@ -43,7 +43,7 @@ export async function buildApp(input: {
   await app.register(cookie, { secret: config.cookieSecret, hook: "onRequest" });
   await app.register(cors, {
     credentials: true,
-    methods: ["GET", "POST", "PATCH", "OPTIONS"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["content-type", "x-csrf-token", "x-ticket-token"],
     origin(origin, callback) {
       if (!origin) return callback(null, true);
