@@ -118,6 +118,16 @@ textarea { line-height:1.5; resize:vertical; }
 .global-status { margin-top:12px; }
 
 .escort-section { display:grid; gap:20px; }
+.discipline-panel { display:grid; grid-template-columns:minmax(0,2fr) minmax(210px,.7fr); gap:12px; }
+.discipline-rules,.shop-bank { border:1px solid rgba(85,244,225,.12); border-radius:16px; background:linear-gradient(145deg,rgba(85,244,225,.045),rgba(5,9,11,.7)); }
+.discipline-rules { display:flex; gap:12px; padding:15px; }
+.discipline-rules__mark { display:grid; place-items:center; flex:0 0 32px; width:32px; height:32px; border-radius:10px; color:#06110f; background:var(--cyan); font-weight:900; }
+.discipline-rules small,.shop-bank small { color:#69cfc2; font-size:7px; letter-spacing:.14em; }
+.discipline-rules h3 { margin:4px 0 8px; font-size:12px; }
+.discipline-rules ol { display:grid; gap:4px; margin:0; padding-left:17px; color:#849794; font-size:8px; line-height:1.45; }
+.shop-bank { display:flex; flex-direction:column; justify-content:center; padding:16px; box-shadow:inset 0 0 28px rgba(85,244,225,.025); }
+.shop-bank strong { margin:8px 0 4px; color:var(--cyan); font-size:24px; letter-spacing:-.03em; }
+.shop-bank span { color:#6f8380; font-size:8px; line-height:1.45; }
 .escort-form { display:grid; gap:16px; padding:17px; border:1px solid rgba(85,244,225,.1); border-radius:16px; background:rgba(85,244,225,.025); }
 .escort-fields { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
 .escort-fields label { display:grid; align-content:start; gap:6px; color:#91a3a1; font-size:9px; font-weight:700; }
@@ -148,23 +158,40 @@ textarea { line-height:1.5; resize:vertical; }
 .escort-order__head h3 { margin:0; font-size:13px; }
 .escort-order__head p { margin:5px 0 0; color:#748784; font-size:9px; }
 .escort-order__head select { width:auto; min-width:140px; min-height:36px; }
-.escort-order__money { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin:11px 0; }
+.escort-order__money { display:grid; grid-template-columns:repeat(5,1fr); gap:7px; margin:11px 0; }
 .escort-order__money span { padding:9px; border-radius:9px; background:rgba(0,0,0,.16); }
 .escort-order__money small,.escort-order__money strong { display:block; }
 .escort-order__money small { color:#5f7471; font-size:7px; }
 .escort-order__money strong { margin-top:3px; color:#b9ccca; font-size:10px; }
 .escort-order__players { display:grid; gap:6px; }
-.escort-player { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 10px; border:1px solid rgba(255,255,255,.055); border-radius:10px; }
+.escort-player { display:grid; gap:9px; padding:10px; border:1px solid rgba(255,255,255,.055); border-radius:10px; }
+.escort-player.is-replaced { opacity:.66; border-style:dashed; }
+.escort-player__top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .escort-player span,.escort-player small,.escort-player strong { display:block; }
 .escort-player strong { font-size:9px; }
 .escort-player small { margin-top:2px; color:#627572; font-size:7px; }
 .escort-player label { display:flex; align-items:center; gap:7px; color:#8ea29f; font-size:8px; cursor:pointer; }
 .escort-player input { width:16px; min-height:16px; accent-color:var(--cyan); }
+.escort-player__figures { display:flex; flex-wrap:wrap; gap:5px; }
+.escort-player__figures span { padding:5px 7px; border-radius:7px; color:#829592; background:rgba(255,255,255,.035); font-size:7px; }
+.escort-player__figures b { color:#c4d3d1; }
+.escort-player__penalties { display:grid; gap:4px; }
+.escort-player__penalties p { margin:0; padding:6px 8px; border-left:2px solid #ff786f; color:#9caaa8; background:rgba(255,95,87,.04); font-size:7px; }
+.escort-actions { border-top:1px solid rgba(255,255,255,.055); padding-top:7px; }
+.escort-actions summary { color:#7f9693; cursor:pointer; font-size:8px; }
+.escort-action-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+.escort-mini-form { display:grid; grid-template-columns:1fr auto; gap:6px; padding:8px; border:1px solid rgba(255,255,255,.05); border-radius:9px; background:rgba(0,0,0,.12); }
+.escort-mini-form span { grid-column:1/-1; color:#718784; font-size:7px; }
+.escort-mini-form input { width:100%; min-height:34px; }
+.escort-mini-form button { min-height:34px; padding:0 10px; border:1px solid rgba(85,244,225,.16); border-radius:8px; color:#aee7df; background:rgba(85,244,225,.06); cursor:pointer; font-size:7px; font-weight:800; }
+.escort-mini-form--penalty button { color:#ffaaa5; border-color:rgba(255,95,87,.2); background:rgba(255,95,87,.06); }
+.escort-mini-form--replacement input:nth-of-type(2) { grid-column:1/2; }
 
 @keyframes spin { to { transform:rotate(360deg); } }
 @keyframes drift { to { transform:translate(25vw,15vw) scale(1.15); } }
 
 @media (max-width:800px) {
+  .discipline-panel { grid-template-columns:1fr; }
   .stat-grid { grid-template-columns:repeat(2,1fr); }
   .admin-review { grid-template-columns:1fr; }
   .ticket-layout { grid-template-columns:1fr; }
@@ -176,6 +203,10 @@ textarea { line-height:1.5; resize:vertical; }
 }
 
 @media (max-width:520px) {
+  .discipline-rules { padding:12px; }
+  .discipline-rules__mark { flex-basis:28px; width:28px; height:28px; }
+  .shop-bank { padding:13px; }
+  .escort-action-grid { grid-template-columns:1fr; }
   .login-card { padding:27px 18px; }
   .admin-header { padding-inline:12px; }
   .admin-user span { display:none; }

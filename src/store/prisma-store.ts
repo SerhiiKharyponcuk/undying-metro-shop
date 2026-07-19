@@ -15,6 +15,14 @@ import type {
   TicketStatus,
 } from "../types/domain.js";
 import type { AppStore, NewEscortOrder, NewReview, NewTicket } from "./store.js";
+import { calculatePenaltyAmount } from "../lib/escort-calculation.js";
+
+const escortOrderInclude = {
+  participants: {
+    include: { penalties: { orderBy: { sequence: "asc" as const } } },
+    orderBy: { createdAt: "asc" as const },
+  },
+};
 
 function mapAdmin(value: any): AdminRecord {
   return {
@@ -108,8 +116,21 @@ function mapEscortOrder(value: any): EscortOrderRecord {
       name: participant.name,
       contact: participant.contact,
       shareUahMinor: participant.shareUahMinor,
+      active: participant.active,
       paid: participant.paid,
       paidAt: participant.paidAt,
+      replacedAt: participant.replacedAt,
+      replacementForId: participant.replacementForId,
+      penalties: (participant.penalties ?? []).map((penalty: any) => ({
+        id: penalty.id,
+        participantId: penalty.participantId,
+        sequence: penalty.sequence,
+        percentage: penalty.percentage,
+        amountUahMinor: penalty.amountUahMinor,
+        reason: penalty.reason,
+        createdById: penalty.createdById,
+        createdAt: penalty.createdAt,
+      })),
     })),
   };
 }
@@ -270,7 +291,7 @@ export class PrismaStore implements AppStore {
         ...(order as any),
         participants: { create: participants as any },
       },
-      include: { participants: { orderBy: { createdAt: "asc" } } },
+      include: escortOrderInclude,
     }));
   }
 
@@ -279,7 +300,7 @@ export class PrismaStore implements AppStore {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.escortOrder.findMany({
         where,
-        include: { participants: { orderBy: { createdAt: "asc" } } },
+        include: escortOrderInclude,
         orderBy: [{ orderDate: "desc" }, { createdAt: "desc" }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -295,22 +316,84 @@ export class PrismaStore implements AppStore {
     return mapEscortOrder(await this.prisma.escortOrder.update({
       where: { id },
       data: { status: status as any },
-      include: { participants: { orderBy: { createdAt: "asc" } } },
+      include: escortOrderInclude,
     }));
   }
 
   async updateEscortParticipantPaid(orderId: string, participantId: string, paid: boolean): Promise<EscortOrderRecord | null> {
     const participant = await this.prisma.escortParticipant.findFirst({ where: { id: participantId, orderId } });
     if (!participant) return null;
+    if (!participant.active) throw new Error("Нельзя выплатить долю заменённому игроку");
     await this.prisma.escortParticipant.update({
       where: { id: participantId },
       data: { paid, paidAt: paid ? new Date() : null },
     });
     const order = await this.prisma.escortOrder.findUnique({
       where: { id: orderId },
-      include: { participants: { orderBy: { createdAt: "asc" } } },
+      include: escortOrderInclude,
     });
     return order ? mapEscortOrder(order) : null;
+  }
+
+  async penalizeEscortParticipant(orderId: string, participantId: string, reason: string, adminId: string): Promise<EscortOrderRecord | null> {
+    const order = await this.prisma.$transaction(async (database) => {
+      const participant = await database.escortParticipant.findFirst({
+        where: { id: participantId, orderId },
+        include: { penalties: { orderBy: { sequence: "asc" } } },
+      });
+      if (!participant) return null;
+      if (!participant.active) throw new Error("Нельзя штрафовать заменённого игрока");
+      if (participant.paid) throw new Error("Нельзя изменить уже выплаченную долю");
+      const sequence = participant.penalties.length + 1;
+      const penalty = calculatePenaltyAmount(participant.shareUahMinor, sequence);
+      const alreadyWithheld = participant.penalties.reduce((sum, item) => sum + item.amountUahMinor, 0n);
+      const remaining = participant.shareUahMinor - alreadyWithheld;
+      const amountUahMinor = penalty.amountUahMinor > remaining ? remaining : penalty.amountUahMinor;
+      await database.escortPenalty.create({
+        data: { participantId, sequence, percentage: penalty.percentage, amountUahMinor, reason, createdById: adminId },
+      });
+      return database.escortOrder.findUnique({ where: { id: orderId }, include: escortOrderInclude });
+    }, { isolationLevel: "Serializable" });
+    return order ? mapEscortOrder(order) : null;
+  }
+
+  async replaceEscortParticipant(
+    orderId: string,
+    participantId: string,
+    input: { name: string; contact: string | null },
+  ): Promise<EscortOrderRecord | null> {
+    const order = await this.prisma.$transaction(async (database) => {
+      const participant = await database.escortParticipant.findFirst({
+        where: { id: participantId, orderId },
+        include: { penalties: true },
+      });
+      if (!participant) return null;
+      if (!participant.active) throw new Error("Этот игрок уже заменён");
+      if (participant.paid) throw new Error("Нельзя заменить игрока после выплаты");
+      const withheld = participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
+      const transferredShare = participant.shareUahMinor - withheld;
+      if (transferredShare <= 0n) throw new Error("У игрока не осталось доли для передачи");
+      await database.escortParticipant.update({
+        where: { id: participantId },
+        data: { active: false, replacedAt: new Date() },
+      });
+      await database.escortParticipant.create({
+        data: {
+          orderId,
+          name: input.name,
+          contact: input.contact,
+          shareUahMinor: transferredShare,
+          replacementForId: participantId,
+        },
+      });
+      return database.escortOrder.findUnique({ where: { id: orderId }, include: escortOrderInclude });
+    }, { isolationLevel: "Serializable" });
+    return order ? mapEscortOrder(order) : null;
+  }
+
+  async getShopBankBalance(): Promise<bigint> {
+    const result = await this.prisma.escortPenalty.aggregate({ _sum: { amountUahMinor: true } });
+    return result._sum.amountUahMinor ?? 0n;
   }
 
   async findAdminByUsername(username: string): Promise<AdminRecord | null> {

@@ -250,6 +250,69 @@ describe("Undying Metro API", () => {
     expect(paid.json().participants[0].paid).toBe(true);
   });
 
+  it("применяет ступени штрафов и зачисляет удержания в банк магазина", async () => {
+    const { cookie, csrf } = await login();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/escort-orders",
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { item: "Сопровождение", buyerName: "Покупатель", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок" }] },
+    });
+    const participantId = created.json().participants[0].id;
+    let lastResponse;
+    for (const reason of ["Опоздание", "Срыв захода", "Игнорирование команды", "Грубое нарушение"]) {
+      lastResponse = await app.inject({
+        method: "POST",
+        url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}/penalties`,
+        headers: { cookie, "x-csrf-token": csrf },
+        payload: { reason },
+      });
+      expect(lastResponse.statusCode).toBe(200);
+    }
+    const player = lastResponse!.json().participants[0];
+    expect(player.penalties.map((penalty: any) => penalty.percentage)).toEqual([5, 10, 15, 50]);
+    expect(player.penaltyTotalUah).toBe("720.00");
+    expect(player.payoutUah).toBe("180.00");
+    const bank = await app.inject({ method: "GET", url: "/api/admin/shop-bank", headers: { cookie } });
+    expect(bank.json().balanceUah).toBe("720.00");
+    const fifth = await app.inject({
+      method: "POST",
+      url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}/penalties`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { reason: "Повторное нарушение" },
+    });
+    expect(fifth.statusCode).toBe(409);
+  });
+
+  it("сохраняет историю замены и передаёт новому игроку остаток доли", async () => {
+    const { cookie, csrf } = await login();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/escort-orders",
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { item: "Сопровождение", buyerName: "Покупатель", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Первый игрок" }] },
+    });
+    const participantId = created.json().participants[0].id;
+    await app.inject({
+      method: "POST",
+      url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}/penalties`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { reason: "Опоздание" },
+    });
+    const replaced = await app.inject({
+      method: "POST",
+      url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}/replacement`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { name: "Новый игрок", contact: "@new_player" },
+    });
+    expect(replaced.statusCode).toBe(200);
+    const [oldPlayer, newPlayer] = replaced.json().participants;
+    expect(oldPlayer).toMatchObject({ active: false, payoutUah: "0.00" });
+    expect(newPlayer).toMatchObject({ active: true, shareUah: "855.00", payoutUah: "855.00", nextPenaltyPercent: 5 });
+    expect(newPlayer.replacementForId).toBe(oldPlayer.id);
+    expect(replaced.json().bankFromPenaltiesUah).toBe("45.00");
+  });
+
   it("создаёт заявку и разрешает доступ только с секретным токеном", async () => {
     const created = await app.inject({ method: "POST", url: "/api/support/tickets", payload: ticketPayload() });
     expect(created.statusCode).toBe(201);

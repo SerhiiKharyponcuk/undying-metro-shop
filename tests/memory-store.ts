@@ -16,6 +16,7 @@ import type {
   SupportTicketRecord,
   TicketStatus,
 } from "../src/types/domain.js";
+import { calculatePenaltyAmount } from "../src/lib/escort-calculation.js";
 
 export class MemoryStore implements AppStore {
   admins: AdminRecord[] = [];
@@ -158,8 +159,12 @@ export class MemoryStore implements AppStore {
         id: randomUUID(),
         orderId,
         ...participant,
+        active: true,
         paid: false,
         paidAt: null,
+        replacedAt: null,
+        replacementForId: null,
+        penalties: [],
       })),
     };
     this.escortOrders.push(order);
@@ -184,10 +189,73 @@ export class MemoryStore implements AppStore {
     const order = this.escortOrders.find((item) => item.id === orderId);
     const participant = order?.participants.find((item) => item.id === participantId);
     if (!order || !participant) return null;
+    if (!participant.active) throw new Error("Нельзя выплатить долю заменённому игроку");
     participant.paid = paid;
     participant.paidAt = paid ? new Date() : null;
     order.updatedAt = new Date();
     return order;
+  }
+
+  async penalizeEscortParticipant(orderId: string, participantId: string, reason: string, adminId: string): Promise<EscortOrderRecord | null> {
+    const order = this.escortOrders.find((item) => item.id === orderId);
+    const participant = order?.participants.find((item) => item.id === participantId);
+    if (!order || !participant) return null;
+    if (!participant.active) throw new Error("Нельзя штрафовать заменённого игрока");
+    if (participant.paid) throw new Error("Нельзя изменить уже выплаченную долю");
+    const sequence = participant.penalties.length + 1;
+    const calculated = calculatePenaltyAmount(participant.shareUahMinor, sequence);
+    participant.penalties.push({
+      id: randomUUID(),
+      participantId,
+      sequence,
+      percentage: calculated.percentage,
+      amountUahMinor: calculated.amountUahMinor,
+      reason,
+      createdById: adminId,
+      createdAt: new Date(),
+    });
+    order.updatedAt = new Date();
+    return order;
+  }
+
+  async replaceEscortParticipant(
+    orderId: string,
+    participantId: string,
+    input: { name: string; contact: string | null },
+  ): Promise<EscortOrderRecord | null> {
+    const order = this.escortOrders.find((item) => item.id === orderId);
+    const participant = order?.participants.find((item) => item.id === participantId);
+    if (!order || !participant) return null;
+    if (!participant.active) throw new Error("Этот игрок уже заменён");
+    if (participant.paid) throw new Error("Нельзя заменить игрока после выплаты");
+    const withheld = participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
+    participant.active = false;
+    participant.replacedAt = new Date();
+    order.participants.push({
+      id: randomUUID(),
+      orderId,
+      name: input.name,
+      contact: input.contact,
+      shareUahMinor: participant.shareUahMinor - withheld,
+      active: true,
+      paid: false,
+      paidAt: null,
+      replacedAt: null,
+      replacementForId: participant.id,
+      penalties: [],
+    });
+    order.updatedAt = new Date();
+    return order;
+  }
+
+  async getShopBankBalance(): Promise<bigint> {
+    return this.escortOrders.reduce(
+      (orders, order) => orders + order.participants.reduce(
+        (participants, participant) => participants + participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n),
+        0n,
+      ),
+      0n,
+    );
   }
 
   async findAdminByUsername(username: string): Promise<AdminRecord | null> {

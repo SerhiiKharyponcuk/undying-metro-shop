@@ -102,8 +102,23 @@ export interface EscortParticipantRecord {
   name: string;
   contact: string | null;
   shareUahMinor: bigint;
+  active: boolean;
   paid: boolean;
   paidAt: Date | null;
+  replacedAt: Date | null;
+  replacementForId: string | null;
+  penalties: EscortPenaltyRecord[];
+}
+
+export interface EscortPenaltyRecord {
+  id: string;
+  participantId: string;
+  sequence: number;
+  percentage: number;
+  amountUahMinor: bigint;
+  reason: string;
+  createdById: string;
+  createdAt: Date;
 }
 
 export interface EscortOrderRecord {

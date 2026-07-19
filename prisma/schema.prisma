@@ -76,6 +76,7 @@ model Admin {
   assigned       SupportTicket[]  @relation("TicketAssignee")
   supportReplies SupportMessage[] @relation("MessageAdmin")
   escortOrders   EscortOrder[]    @relation("EscortOrderCreator")
+  escortPenalties EscortPenalty[] @relation("EscortPenaltyAdmin")
 
   @@map("admins")
 }
@@ -106,18 +107,42 @@ model EscortOrder {
 }
 
 model EscortParticipant {
-  id            String      @id @default(uuid())
-  orderId       String      @map("order_id")
-  name          String      @db.VarChar(64)
-  contact       String?     @db.VarChar(128)
-  shareUahMinor BigInt      @map("share_uah_minor")
-  paid          Boolean     @default(false)
-  paidAt        DateTime?   @map("paid_at")
-  createdAt     DateTime    @default(now()) @map("created_at")
-  order         EscortOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id               String               @id @default(uuid())
+  orderId          String               @map("order_id")
+  name             String               @db.VarChar(64)
+  contact          String?              @db.VarChar(128)
+  shareUahMinor    BigInt               @map("share_uah_minor")
+  active           Boolean              @default(true)
+  paid             Boolean              @default(false)
+  paidAt           DateTime?            @map("paid_at")
+  replacedAt       DateTime?            @map("replaced_at")
+  replacementForId String?              @unique @map("replacement_for_id")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  order            EscortOrder          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  penalties        EscortPenalty[]
+  replacementFor   EscortParticipant?   @relation("ParticipantReplacement", fields: [replacementForId], references: [id], onDelete: SetNull)
+  replacement      EscortParticipant?   @relation("ParticipantReplacement")
 
   @@index([orderId])
   @@map("escort_participants")
+}
+
+model EscortPenalty {
+  id             String            @id @default(uuid())
+  participantId  String            @map("participant_id")
+  sequence       Int
+  percentage     Int
+  amountUahMinor BigInt            @map("amount_uah_minor")
+  reason         String            @db.VarChar(300)
+  createdById    String            @map("created_by_id")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  participant    EscortParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  createdBy      Admin             @relation("EscortPenaltyAdmin", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([participantId, sequence])
+  @@index([createdAt])
+  @@index([createdById])
+  @@map("escort_penalties")
 }
 
 model AdminSession {

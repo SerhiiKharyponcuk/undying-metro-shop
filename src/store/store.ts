@@ -80,6 +80,13 @@ export interface AppStore {
   listEscortOrders(status: EscortOrderStatus | undefined, page: number, pageSize: number): Promise<Page<EscortOrderRecord>>;
   updateEscortOrderStatus(id: string, status: EscortOrderStatus): Promise<EscortOrderRecord | null>;
   updateEscortParticipantPaid(orderId: string, participantId: string, paid: boolean): Promise<EscortOrderRecord | null>;
+  penalizeEscortParticipant(orderId: string, participantId: string, reason: string, adminId: string): Promise<EscortOrderRecord | null>;
+  replaceEscortParticipant(
+    orderId: string,
+    participantId: string,
+    input: { name: string; contact: string | null },
+  ): Promise<EscortOrderRecord | null>;
+  getShopBankBalance(): Promise<bigint>;
 
   findAdminByUsername(username: string): Promise<AdminRecord | null>;
   createAdmin(username: string, passwordHash: string): Promise<AdminRecord>;

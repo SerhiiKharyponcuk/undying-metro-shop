@@ -1,6 +1,7 @@
 const MONEY_PATTERN = /^\d{1,9}(?:[.,]\d{1,2})?$/;
 const RATE_PATTERN = /^\d{1,5}(?:[.,]\d{1,6})?$/;
 const RATE_SCALE = 1_000_000n;
+export const PENALTY_PERCENTAGES = [5, 10, 15, 50] as const;
 
 function decimalToScaled(value: string | number, decimals: number, pattern: RegExp, label: string): bigint {
   const normalized = String(value).trim().replace(",", ".");
@@ -37,6 +38,13 @@ export function calculateEscortSplit(originalAmountMinor: bigint, exchangeRateMi
   const remainder = escortPoolMinor % count;
   const shares = Array.from({ length: escortCount }, (_, index) => baseShare + (BigInt(index) < remainder ? 1n : 0n));
   return { amountUahMinor, developerAmountMinor, escortPoolMinor, shares };
+}
+
+export function calculatePenaltyAmount(shareUahMinor: bigint, sequence: number): { percentage: number; amountUahMinor: bigint } {
+  const percentage = PENALTY_PERCENTAGES[sequence - 1];
+  if (!percentage) throw new Error("Для игрока уже применены все ступени штрафов");
+  const amountUahMinor = roundedDivide(shareUahMinor * BigInt(percentage), 100n);
+  return { percentage, amountUahMinor };
 }
 
 export function formatMinor(value: bigint): string {

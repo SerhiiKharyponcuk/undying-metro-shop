@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
-import { calculateEscortSplit, formatMinor, formatRate, parseMoneyToMinor, parseRateToMicros } from "../lib/escort-calculation.js";
+import { calculateEscortSplit, formatMinor, formatRate, parseMoneyToMinor, parseRateToMicros, PENALTY_PERCENTAGES } from "../lib/escort-calculation.js";
 import { getOfficialNbuRate } from "../lib/nbu.js";
 import { cleanPlainText, constantTimeEqual, containsMarkup, hashSecret, randomToken, sha256, verifySecret } from "../lib/security.js";
 import type { AppStore } from "../store/store.js";
@@ -58,6 +58,11 @@ const escortStatusBody = z.object({ status: z.enum(["planned", "completed", "pai
 const participantPaidBody = z.object({ paid: z.boolean() });
 const participantParams = z.object({ id: z.string().uuid(), participantId: z.string().uuid() });
 const rateQuery = z.object({ currency: z.enum(["UAH", "EUR", "USD"]), date: orderDateValue });
+const penaltyBody = z.object({ reason: plainText(3, 300) });
+const replacementBody = z.object({
+  name: plainText(2, 64),
+  contact: z.union([plainText(3, 128), z.literal("")]).optional().default(""),
+});
 
 function orderDate(value: string): Date | null {
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -65,6 +70,13 @@ function orderDate(value: string): Date | null {
 }
 
 function serializeEscortOrder(order: any) {
+  const orderPenaltyMinor = order.participants.reduce(
+    (sum: bigint, participant: any) => sum + (participant.penalties ?? []).reduce(
+      (penaltySum: bigint, penalty: any) => penaltySum + penalty.amountUahMinor,
+      0n,
+    ),
+    0n,
+  );
   return {
     id: order.id,
     item: order.item,
@@ -81,13 +93,37 @@ function serializeEscortOrder(order: any) {
     status: order.status,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
+    bankFromPenaltiesUah: formatMinor(orderPenaltyMinor),
     participants: order.participants.map((participant: any) => ({
+      ...(() => {
+        const penaltyTotalMinor = (participant.penalties ?? []).reduce(
+          (sum: bigint, penalty: any) => sum + penalty.amountUahMinor,
+          0n,
+        );
+        const nextPenalty = PENALTY_PERCENTAGES[(participant.penalties ?? []).length] ?? null;
+        return {
+          penaltyTotalUah: formatMinor(penaltyTotalMinor),
+          payoutUah: formatMinor(participant.active ? BigInt(participant.shareUahMinor) - penaltyTotalMinor : 0n),
+          nextPenaltyPercent: participant.active ? nextPenalty : null,
+        };
+      })(),
       id: participant.id,
       name: participant.name,
       contact: participant.contact,
       shareUah: formatMinor(participant.shareUahMinor),
+      active: participant.active,
       paid: participant.paid,
       paidAt: participant.paidAt,
+      replacedAt: participant.replacedAt,
+      replacementForId: participant.replacementForId,
+      penalties: (participant.penalties ?? []).map((penalty: any) => ({
+        id: penalty.id,
+        sequence: penalty.sequence,
+        percentage: penalty.percentage,
+        amountUah: formatMinor(penalty.amountUahMinor),
+        reason: penalty.reason,
+        createdAt: penalty.createdAt,
+      })),
     })),
   };
 }
@@ -187,6 +223,11 @@ export async function registerAdminRoutes(
     return { ...page, items: page.items.map(serializeEscortOrder) };
   });
 
+  app.get("/api/admin/shop-bank", { preHandler: requireAdmin }, async () => ({
+    currency: "UAH",
+    balanceUah: formatMinor(await store.getShopBankBalance()),
+  }));
+
   app.post("/api/admin/escort-orders", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
     const parsed = escortOrderBody.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте данные сопровождения" });
@@ -246,8 +287,44 @@ export async function registerAdminRoutes(
     const params = participantParams.safeParse(request.params);
     const body = participantPaidBody.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте данные выплаты" });
-    const order = await store.updateEscortParticipantPaid(params.data.id, params.data.participantId, body.data.paid);
-    return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
+    try {
+      const order = await store.updateEscortParticipantPaid(params.data.id, params.data.participantId, body.data.paid);
+      return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
+    } catch (error) {
+      return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось изменить выплату" });
+    }
+  });
+
+  app.post("/api/admin/escort-orders/:id/participants/:participantId/penalties", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+    const params = participantParams.safeParse(request.params);
+    const body = penaltyBody.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Укажите причину штрафа" });
+    try {
+      const order = await store.penalizeEscortParticipant(
+        params.data.id,
+        params.data.participantId,
+        body.data.reason,
+        request.adminAuth!.admin.id,
+      );
+      return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
+    } catch (error) {
+      return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось применить штраф" });
+    }
+  });
+
+  app.post("/api/admin/escort-orders/:id/participants/:participantId/replacement", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
+    const params = participantParams.safeParse(request.params);
+    const body = replacementBody.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Проверьте данные нового игрока" });
+    try {
+      const order = await store.replaceEscortParticipant(params.data.id, params.data.participantId, {
+        name: body.data.name,
+        contact: body.data.contact || null,
+      });
+      return order ? serializeEscortOrder(order) : reply.code(404).send({ error: "Игрок или сопровождение не найдено" });
+    } catch (error) {
+      return reply.code(409).send({ error: error instanceof Error ? error.message : "Не удалось заменить игрока" });
+    }
   });
 
   app.get("/api/admin/reviews", { preHandler: requireAdmin }, async (request, reply) => {

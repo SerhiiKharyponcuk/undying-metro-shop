@@ -318,21 +318,81 @@
       ["В гривне", money(order.amountUah)],
       ["Разработчику 10%", money(order.developerAmountUah)],
       ["Игрокам", money(order.escortPoolUah)],
+      ["Штрафы в банк", money(order.bankFromPenaltiesUah)],
     ].forEach(([label, value]) => {
       const box = document.createElement("span"); const small = document.createElement("small"); small.textContent = label; const strong = document.createElement("strong"); strong.textContent = value; box.append(small, strong); values.append(box);
     });
     const players = document.createElement("div");
     players.className = "escort-order__players";
     order.participants.forEach((player) => {
-      const row = document.createElement("div"); row.className = "escort-player";
-      const person = document.createElement("span"); const name = document.createElement("strong"); name.textContent = player.name; const note = document.createElement("small"); note.textContent = `${player.contact || "Без контакта"} • ${money(player.shareUah)}`; person.append(name, note);
-      const label = document.createElement("label"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = player.paid; const text = document.createElement("span"); text.textContent = player.paid ? "Выплачено" : "Отметить выплату"; label.append(checkbox, text);
+      const row = document.createElement("article");
+      row.className = `escort-player${player.active ? "" : " is-replaced"}`;
+      const top = document.createElement("div"); top.className = "escort-player__top";
+      const person = document.createElement("span");
+      const name = document.createElement("strong"); name.textContent = player.name;
+      const note = document.createElement("small");
+      note.textContent = `${player.contact || "Без контакта"}${player.active ? "" : " • Заменён"}${player.replacementForId ? " • Вышел на замену" : ""}`;
+      person.append(name, note);
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = player.paid; checkbox.disabled = !player.active;
+      const paymentText = document.createElement("span"); paymentText.textContent = player.active ? (player.paid ? "Выплачено" : "Отметить выплату") : "Доля передана";
+      label.append(checkbox, paymentText);
       checkbox.addEventListener("change", async () => {
         checkbox.disabled = true;
         try { await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}`, { method: "PATCH", body: JSON.stringify({ paid: checkbox.checked }) }); await loadEscortOrders(); }
         catch (error) { checkbox.checked = !checkbox.checked; checkbox.disabled = false; globalStatus.textContent = error.message; }
       });
-      row.append(person, label); players.append(row);
+      top.append(person, label);
+
+      const figures = document.createElement("div"); figures.className = "escort-player__figures";
+      [["Исходная доля", player.shareUah], ["Удержано", player.penaltyTotalUah], ["К выплате", player.payoutUah]].forEach(([caption, value]) => {
+        const figure = document.createElement("span"); figure.textContent = `${caption}: `; const amount = document.createElement("b"); amount.textContent = money(value); figure.append(amount); figures.append(figure);
+      });
+
+      const penalties = document.createElement("div"); penalties.className = "escort-player__penalties";
+      player.penalties.forEach((penalty) => {
+        const item = document.createElement("p");
+        item.textContent = `Штраф ${penalty.sequence}: −${penalty.percentage}% (${money(penalty.amountUah)}) • ${penalty.reason}`;
+        penalties.append(item);
+      });
+
+      row.append(top, figures, penalties);
+      if (player.active && !player.paid) {
+        const details = document.createElement("details"); details.className = "escort-actions";
+        const summary = document.createElement("summary"); summary.textContent = "Штраф или замена игрока";
+        const actions = document.createElement("div"); actions.className = "escort-action-grid";
+
+        const penaltyForm = document.createElement("form"); penaltyForm.className = "escort-mini-form escort-mini-form--penalty";
+        const penaltyCaption = document.createElement("span"); penaltyCaption.textContent = player.nextPenaltyPercent ? `Следующая ступень: −${player.nextPenaltyPercent}% от доли` : "Все ступени штрафов применены";
+        const reason = document.createElement("input"); reason.placeholder = "Причина нарушения"; reason.minLength = 3; reason.maxLength = 300; reason.required = true;
+        const penalize = document.createElement("button"); penalize.type = "submit"; penalize.disabled = !player.nextPenaltyPercent; penalize.textContent = player.nextPenaltyPercent ? `Штраф −${player.nextPenaltyPercent}%` : "Лимит штрафов";
+        penaltyForm.append(penaltyCaption, reason, penalize);
+        penaltyForm.addEventListener("submit", async (event) => {
+          event.preventDefault(); penalize.disabled = true;
+          try {
+            await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}/penalties`, { method: "POST", body: JSON.stringify({ reason: reason.value }) });
+            globalStatus.textContent = "Штраф зафиксирован и зачислен в банк Metro Shop";
+            await loadEscortOrders();
+          } catch (error) { globalStatus.textContent = error.message; penalize.disabled = false; }
+        });
+
+        const replacementForm = document.createElement("form"); replacementForm.className = "escort-mini-form escort-mini-form--replacement";
+        const replacementCaption = document.createElement("span"); replacementCaption.textContent = "Передать оставшуюся долю новому игроку";
+        const replacementName = document.createElement("input"); replacementName.placeholder = "Имя нового игрока"; replacementName.minLength = 2; replacementName.maxLength = 64; replacementName.required = true;
+        const replacementContact = document.createElement("input"); replacementContact.placeholder = "Telegram / контакт"; replacementContact.maxLength = 128;
+        const replace = document.createElement("button"); replace.type = "submit"; replace.textContent = "Заменить";
+        replacementForm.append(replacementCaption, replacementName, replacementContact, replace);
+        replacementForm.addEventListener("submit", async (event) => {
+          event.preventDefault(); replace.disabled = true;
+          try {
+            await api(`/api/admin/escort-orders/${order.id}/participants/${player.id}/replacement`, { method: "POST", body: JSON.stringify({ name: replacementName.value, contact: replacementContact.value }) });
+            globalStatus.textContent = "Игрок заменён, оставшаяся доля передана";
+            await loadEscortOrders();
+          } catch (error) { globalStatus.textContent = error.message; replace.disabled = false; }
+        });
+        actions.append(penaltyForm, replacementForm); details.append(summary, actions); row.append(details);
+      }
+      players.append(row);
     });
     article.append(head, values, players);
     return article;
@@ -343,8 +403,12 @@
     container.replaceChildren(empty("Загрузка…", "Получаем историю сопровождений"));
     try {
       const status = document.querySelector("#escortFilter").value;
-      const result = await api(`/api/admin/escort-orders?status=${encodeURIComponent(status)}&page=1&pageSize=50`, { method: "GET" });
+      const [result, bank] = await Promise.all([
+        api(`/api/admin/escort-orders?status=${encodeURIComponent(status)}&page=1&pageSize=50`, { method: "GET" }),
+        api("/api/admin/shop-bank", { method: "GET" }),
+      ]);
       container.replaceChildren();
+      document.querySelector("#shopBankBalance").textContent = money(bank.balanceUah);
       document.querySelector("#escortHistoryTotal").textContent = `Записей: ${result.total}`;
       if (!result.items.length) container.append(empty("Сопровождений пока нет", "Создайте первый расчёт выше."));
       result.items.forEach((order) => container.append(escortOrderElement(order)));

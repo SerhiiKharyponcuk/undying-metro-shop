@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#05090b" />
     <title>Undying Metro — Админ-панель</title>
     <link rel="icon" href="../assets/undying-metro-avatar.webp" type="image/webp" />
-    <link rel="stylesheet" href="styles.css?v=7" />
-    <script src="../config.js?v=7"></script>
+    <link rel="stylesheet" href="styles.css?v=8" />
+    <script src="../config.js?v=8"></script>
   </head>
   <body>
     <div class="admin-world" aria-hidden="true"><span></span><span></span></div>
@@ -85,6 +85,28 @@
             <label><span>История</span><select id="escortFilter"><option value="">Все статусы</option><option value="planned">Запланировано</option><option value="completed">Завершено</option><option value="paid">Выплачено</option><option value="cancelled">Отменено</option></select></label>
           </div>
 
+          <div class="discipline-panel">
+            <div class="discipline-rules">
+              <span class="discipline-rules__mark">!</span>
+              <div>
+                <small>РЕГЛАМЕНТ СОПРОВОЖДЕНИЯ</small>
+                <h3>Правила работы и штрафов</h3>
+                <ol>
+                  <li>Выполнять согласованную роль, слушать координатора и не покидать сопровождение без предупреждения.</li>
+                  <li>Не задерживать команду, не срывать заход и заранее сообщать о технических проблемах.</li>
+                  <li>Не присваивать чужой лут, не обманывать покупателя и соблюдать договорённости магазина.</li>
+                  <li>Каждое подтверждённое нарушение фиксируется с причиной: 5% → 10% → 15% → 50% от личной доли.</li>
+                  <li>При замене штрафы остаются в истории, а новому игроку передаётся только оставшаяся невыплаченная доля.</li>
+                </ol>
+              </div>
+            </div>
+            <div class="shop-bank">
+              <small>БАНК METRO SHOP</small>
+              <strong id="shopBankBalance">0,00 ₴</strong>
+              <span>Сюда автоматически поступают все удержанные штрафы</span>
+            </div>
+          </div>
+
           <form class="escort-form" id="escortForm">
             <div class="escort-fields">
               <label><span>Что купили</span><input name="item" minlength="2" maxlength="160" placeholder="Например: сопровождение Metro Royale" required /></label>
@@ -117,6 +139,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=8"></script>
   </body>
 </html>
