@@ -106,6 +106,7 @@ export interface EscortParticipantRecord {
   paid: boolean;
   paidAt: Date | null;
   replacedAt: Date | null;
+  excludedAt: Date | null;
   replacementForId: string | null;
   penalties: EscortPenaltyRecord[];
 }
@@ -132,6 +133,7 @@ export interface EscortOrderRecord {
   rateSource: ExchangeRateSource;
   amountUahMinor: bigint;
   developerAmountMinor: bigint;
+  creatorAmountMinor: bigint;
   escortPoolMinor: bigint;
   orderDate: Date;
   status: EscortOrderStatus;

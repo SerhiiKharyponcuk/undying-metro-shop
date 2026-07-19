@@ -200,11 +200,11 @@
     const amount = Number(String(escortForm.elements.amount.value || "0").replace(",", "."));
     const rate = Number(String(escortForm.elements.exchangeRate.value || "0").replace(",", "."));
     const total = Number.isFinite(amount * rate) ? Math.round(amount * rate * 100) / 100 : 0;
-    const developer = Math.round(total * 10) / 100;
-    const pool = Math.round((total - developer) * 100) / 100;
+    const creator = Math.round(total * 3) / 100;
+    const pool = Math.round((total - creator) * 100) / 100;
     const share = escortPeople.children.length ? Math.floor((pool / escortPeople.children.length) * 100) / 100 : 0;
     document.querySelector("#previewTotal").textContent = money(total);
-    document.querySelector("#previewDeveloper").textContent = money(developer);
+    document.querySelector("#previewCreator").textContent = money(creator);
     document.querySelector("#previewPool").textContent = money(pool);
     document.querySelector("#previewShare").textContent = money(share);
   }
@@ -316,7 +316,7 @@
     [
       ["Оплачено", `${order.originalAmount} ${order.currency}`],
       ["В гривне", money(order.amountUah)],
-      ["Разработчику 10%", money(order.developerAmountUah)],
+      ["Создателю 3%", money(order.creatorAmountUah)],
       ["Игрокам", money(order.escortPoolUah)],
       ["Штрафы в банк", money(order.bankFromPenaltiesUah)],
     ].forEach(([label, value]) => {
@@ -326,16 +326,16 @@
     players.className = "escort-order__players";
     order.participants.forEach((player) => {
       const row = document.createElement("article");
-      row.className = `escort-player${player.active ? "" : " is-replaced"}`;
+      row.className = `escort-player${player.replacedAt ? " is-replaced" : ""}${player.excludedAt && !player.replacedAt ? " is-excluded" : ""}`;
       const top = document.createElement("div"); top.className = "escort-player__top";
       const person = document.createElement("span");
       const name = document.createElement("strong"); name.textContent = player.name;
       const note = document.createElement("small");
-      note.textContent = `${player.contact || "Без контакта"}${player.active ? "" : " • Заменён"}${player.replacementForId ? " • Вышел на замену" : ""}`;
+      note.textContent = `${player.contact || "Без контакта"}${player.replacedAt ? " • Заменён" : ""}${player.excludedAt && !player.replacedAt ? " • Исключён после 4 нарушения" : ""}${player.replacementForId ? " • Вышел на замену" : ""}`;
       person.append(name, note);
       const label = document.createElement("label");
-      const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = player.paid; checkbox.disabled = !player.active;
-      const paymentText = document.createElement("span"); paymentText.textContent = player.active ? (player.paid ? "Выплачено" : "Отметить выплату") : "Доля передана";
+      const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = player.paid; checkbox.disabled = Boolean(player.replacedAt);
+      const paymentText = document.createElement("span"); paymentText.textContent = player.replacedAt ? "Доля передана" : (player.paid ? "Выплачено" : "Отметить выплату");
       label.append(checkbox, paymentText);
       checkbox.addEventListener("change", async () => {
         checkbox.disabled = true;
@@ -357,9 +357,9 @@
       });
 
       row.append(top, figures, penalties);
-      if (player.active && !player.paid) {
+      if (!player.replacedAt && !player.paid) {
         const details = document.createElement("details"); details.className = "escort-actions";
-        const summary = document.createElement("summary"); summary.textContent = "Штраф или замена игрока";
+        const summary = document.createElement("summary"); summary.textContent = player.excludedAt ? "Игрок исключён — назначить замену" : "Штраф или замена игрока";
         const actions = document.createElement("div"); actions.className = "escort-action-grid";
 
         const penaltyForm = document.createElement("form"); penaltyForm.className = "escort-mini-form escort-mini-form--penalty";
@@ -408,7 +408,8 @@
         api("/api/admin/shop-bank", { method: "GET" }),
       ]);
       container.replaceChildren();
-      document.querySelector("#shopBankBalance").textContent = money(bank.balanceUah);
+      document.querySelector("#shopBankBalance").textContent = money(bank.penaltyBalanceUah);
+      document.querySelector("#creatorBankBalance").textContent = money(bank.creatorBalanceUah);
       document.querySelector("#escortHistoryTotal").textContent = `Записей: ${result.total}`;
       if (!result.items.length) container.append(empty("Сопровождений пока нет", "Создайте первый расчёт выше."));
       result.items.forEach((order) => container.append(escortOrderElement(order)));

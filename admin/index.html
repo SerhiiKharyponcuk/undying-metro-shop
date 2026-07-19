@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#05090b" />
     <title>Undying Metro — Админ-панель</title>
     <link rel="icon" href="../assets/undying-metro-avatar.webp" type="image/webp" />
-    <link rel="stylesheet" href="styles.css?v=8" />
-    <script src="../config.js?v=8"></script>
+    <link rel="stylesheet" href="styles.css?v=9" />
+    <script src="../config.js?v=9"></script>
   </head>
   <body>
     <div class="admin-world" aria-hidden="true"><span></span><span></span></div>
@@ -81,7 +81,7 @@
 
         <section class="admin-section escort-section" data-admin-section="escorts" hidden>
           <div class="section-toolbar">
-            <div><h2>Новое сопровождение</h2><p>10% разработчику, остаток автоматически делится между сопровождающими.</p></div>
+            <div><h2>Новое сопровождение</h2><p>3% создателю, остаток автоматически делится между сопровождающими.</p></div>
             <label><span>История</span><select id="escortFilter"><option value="">Все статусы</option><option value="planned">Запланировано</option><option value="completed">Завершено</option><option value="paid">Выплачено</option><option value="cancelled">Отменено</option></select></label>
           </div>
 
@@ -95,15 +95,24 @@
                   <li>Выполнять согласованную роль, слушать координатора и не покидать сопровождение без предупреждения.</li>
                   <li>Не задерживать команду, не срывать заход и заранее сообщать о технических проблемах.</li>
                   <li>Не присваивать чужой лут, не обманывать покупателя и соблюдать договорённости магазина.</li>
-                  <li>Каждое подтверждённое нарушение фиксируется с причиной: 5% → 10% → 15% → 50% от личной доли.</li>
+                  <li>Первые три нарушения — предупреждения со штрафами 5%, 10% и 15% от гонорара.</li>
+                  <li>Четвёртое нарушение — штраф 50% от гонорара и автоматическое исключение из сопровождений.</li>
                   <li>При замене штрафы остаются в истории, а новому игроку передаётся только оставшаяся невыплаченная доля.</li>
                 </ol>
+                <a class="rules-poster-link" href="../assets/rules-poster-a4.png" target="_blank" rel="noopener">Открыть правила A4 ↗</a>
               </div>
             </div>
-            <div class="shop-bank">
-              <small>БАНК METRO SHOP</small>
-              <strong id="shopBankBalance">0,00 ₴</strong>
-              <span>Сюда автоматически поступают все удержанные штрафы</span>
+            <div class="bank-stack">
+              <div class="shop-bank">
+                <small>БАНК METRO SHOP</small>
+                <strong id="shopBankBalance">0,00 ₴</strong>
+                <span>Сюда автоматически поступают все удержанные штрафы</span>
+              </div>
+              <div class="shop-bank shop-bank--creator">
+                <small>БАНК СОЗДАТЕЛЯ</small>
+                <strong id="creatorBankBalance">0,00 ₴</strong>
+                <span>Отдельные 3% с каждого сопровождения</span>
+              </div>
             </div>
           </div>
 
@@ -124,7 +133,7 @@
 
             <div class="escort-preview" id="escortPreview">
               <span><small>Всего в гривне</small><strong id="previewTotal">0,00 ₴</strong></span>
-              <span class="escort-preview__developer"><small>Разработчику 10%</small><strong id="previewDeveloper">0,00 ₴</strong></span>
+              <span class="escort-preview__developer"><small>Создателю 3%</small><strong id="previewCreator">0,00 ₴</strong></span>
               <span><small>Сопровождающим</small><strong id="previewPool">0,00 ₴</strong></span>
               <span><small>Каждому</small><strong id="previewShare">0,00 ₴</strong></span>
             </div>
@@ -139,6 +148,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=8"></script>
+    <script src="app.js?v=9"></script>
   </body>
 </html>

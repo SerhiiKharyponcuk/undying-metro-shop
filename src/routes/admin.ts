@@ -87,7 +87,7 @@ function serializeEscortOrder(order: any) {
     exchangeRate: formatRate(order.exchangeRateMicros),
     rateSource: order.rateSource,
     amountUah: formatMinor(order.amountUahMinor),
-    developerAmountUah: formatMinor(order.developerAmountMinor),
+    creatorAmountUah: formatMinor(order.creatorAmountMinor),
     escortPoolUah: formatMinor(order.escortPoolMinor),
     orderDate: order.orderDate,
     status: order.status,
@@ -103,7 +103,7 @@ function serializeEscortOrder(order: any) {
         const nextPenalty = PENALTY_PERCENTAGES[(participant.penalties ?? []).length] ?? null;
         return {
           penaltyTotalUah: formatMinor(penaltyTotalMinor),
-          payoutUah: formatMinor(participant.active ? BigInt(participant.shareUahMinor) - penaltyTotalMinor : 0n),
+          payoutUah: formatMinor(participant.replacedAt ? 0n : BigInt(participant.shareUahMinor) - penaltyTotalMinor),
           nextPenaltyPercent: participant.active ? nextPenalty : null,
         };
       })(),
@@ -115,6 +115,7 @@ function serializeEscortOrder(order: any) {
       paid: participant.paid,
       paidAt: participant.paidAt,
       replacedAt: participant.replacedAt,
+      excludedAt: participant.excludedAt,
       replacementForId: participant.replacementForId,
       penalties: (participant.penalties ?? []).map((penalty: any) => ({
         id: penalty.id,
@@ -223,10 +224,18 @@ export async function registerAdminRoutes(
     return { ...page, items: page.items.map(serializeEscortOrder) };
   });
 
-  app.get("/api/admin/shop-bank", { preHandler: requireAdmin }, async () => ({
-    currency: "UAH",
-    balanceUah: formatMinor(await store.getShopBankBalance()),
-  }));
+  app.get("/api/admin/shop-bank", { preHandler: requireAdmin }, async () => {
+    const [penaltyBalance, creatorBalance] = await Promise.all([
+      store.getShopBankBalance(),
+      store.getCreatorBankBalance(),
+    ]);
+    return {
+      currency: "UAH",
+      balanceUah: formatMinor(penaltyBalance),
+      penaltyBalanceUah: formatMinor(penaltyBalance),
+      creatorBalanceUah: formatMinor(creatorBalance),
+    };
+  });
 
   app.post("/api/admin/escort-orders", { preHandler: [requireAdmin, requireCsrf] }, async (request, reply) => {
     const parsed = escortOrderBody.safeParse(request.body);
@@ -258,7 +267,8 @@ export async function registerAdminRoutes(
         exchangeRateMicros,
         rateSource,
         amountUahMinor: calculation.amountUahMinor,
-        developerAmountMinor: calculation.developerAmountMinor,
+        developerAmountMinor: 0n,
+        creatorAmountMinor: calculation.creatorAmountMinor,
         escortPoolMinor: calculation.escortPoolMinor,
         orderDate: date,
         createdById: request.adminAuth!.admin.id,

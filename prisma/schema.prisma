@@ -92,6 +92,7 @@ model EscortOrder {
   rateSource             ExchangeRateSource @map("rate_source")
   amountUahMinor         BigInt             @map("amount_uah_minor")
   developerAmountMinor  BigInt             @map("developer_amount_minor")
+  creatorAmountMinor    BigInt             @default(0) @map("creator_amount_minor")
   escortPoolMinor        BigInt             @map("escort_pool_minor")
   orderDate              DateTime           @map("order_date") @db.Date
   status                 EscortOrderStatus  @default(planned)
@@ -116,6 +117,7 @@ model EscortParticipant {
   paid             Boolean              @default(false)
   paidAt           DateTime?            @map("paid_at")
   replacedAt       DateTime?            @map("replaced_at")
+  excludedAt       DateTime?            @map("excluded_at")
   replacementForId String?              @unique @map("replacement_for_id")
   createdAt        DateTime             @default(now()) @map("created_at")
   order            EscortOrder          @relation(fields: [orderId], references: [id], onDelete: Cascade)

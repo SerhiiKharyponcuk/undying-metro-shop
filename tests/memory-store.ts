@@ -163,6 +163,7 @@ export class MemoryStore implements AppStore {
         paid: false,
         paidAt: null,
         replacedAt: null,
+        excludedAt: null,
         replacementForId: null,
         penalties: [],
       })),
@@ -189,7 +190,7 @@ export class MemoryStore implements AppStore {
     const order = this.escortOrders.find((item) => item.id === orderId);
     const participant = order?.participants.find((item) => item.id === participantId);
     if (!order || !participant) return null;
-    if (!participant.active) throw new Error("Нельзя выплатить долю заменённому игроку");
+    if (participant.replacedAt) throw new Error("Нельзя выплатить долю заменённому игроку");
     participant.paid = paid;
     participant.paidAt = paid ? new Date() : null;
     order.updatedAt = new Date();
@@ -200,7 +201,7 @@ export class MemoryStore implements AppStore {
     const order = this.escortOrders.find((item) => item.id === orderId);
     const participant = order?.participants.find((item) => item.id === participantId);
     if (!order || !participant) return null;
-    if (!participant.active) throw new Error("Нельзя штрафовать заменённого игрока");
+    if (!participant.active) throw new Error(participant.excludedAt ? "Игрок уже исключён после четвёртого нарушения" : "Нельзя штрафовать заменённого игрока");
     if (participant.paid) throw new Error("Нельзя изменить уже выплаченную долю");
     const sequence = participant.penalties.length + 1;
     const calculated = calculatePenaltyAmount(participant.shareUahMinor, sequence);
@@ -214,6 +215,10 @@ export class MemoryStore implements AppStore {
       createdById: adminId,
       createdAt: new Date(),
     });
+    if (sequence === 4) {
+      participant.active = false;
+      participant.excludedAt = new Date();
+    }
     order.updatedAt = new Date();
     return order;
   }
@@ -226,7 +231,8 @@ export class MemoryStore implements AppStore {
     const order = this.escortOrders.find((item) => item.id === orderId);
     const participant = order?.participants.find((item) => item.id === participantId);
     if (!order || !participant) return null;
-    if (!participant.active) throw new Error("Этот игрок уже заменён");
+    if (!participant.active && !participant.excludedAt) throw new Error("Этот игрок уже заменён");
+    if (participant.replacedAt) throw new Error("Этот игрок уже заменён");
     if (participant.paid) throw new Error("Нельзя заменить игрока после выплаты");
     const withheld = participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
     participant.active = false;
@@ -241,6 +247,7 @@ export class MemoryStore implements AppStore {
       paid: false,
       paidAt: null,
       replacedAt: null,
+      excludedAt: null,
       replacementForId: participant.id,
       penalties: [],
     });
@@ -256,6 +263,10 @@ export class MemoryStore implements AppStore {
       ),
       0n,
     );
+  }
+
+  async getCreatorBankBalance(): Promise<bigint> {
+    return this.escortOrders.filter((order) => order.status !== "cancelled").reduce((sum, order) => sum + order.creatorAmountMinor, 0n);
   }
 
   async findAdminByUsername(username: string): Promise<AdminRecord | null> {

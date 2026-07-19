@@ -104,6 +104,7 @@ function mapEscortOrder(value: any): EscortOrderRecord {
     rateSource: value.rateSource,
     amountUahMinor: value.amountUahMinor,
     developerAmountMinor: value.developerAmountMinor,
+    creatorAmountMinor: value.creatorAmountMinor,
     escortPoolMinor: value.escortPoolMinor,
     orderDate: value.orderDate,
     status: value.status,
@@ -120,6 +121,7 @@ function mapEscortOrder(value: any): EscortOrderRecord {
       paid: participant.paid,
       paidAt: participant.paidAt,
       replacedAt: participant.replacedAt,
+      excludedAt: participant.excludedAt,
       replacementForId: participant.replacementForId,
       penalties: (participant.penalties ?? []).map((penalty: any) => ({
         id: penalty.id,
@@ -323,7 +325,7 @@ export class PrismaStore implements AppStore {
   async updateEscortParticipantPaid(orderId: string, participantId: string, paid: boolean): Promise<EscortOrderRecord | null> {
     const participant = await this.prisma.escortParticipant.findFirst({ where: { id: participantId, orderId } });
     if (!participant) return null;
-    if (!participant.active) throw new Error("Нельзя выплатить долю заменённому игроку");
+    if (participant.replacedAt) throw new Error("Нельзя выплатить долю заменённому игроку");
     await this.prisma.escortParticipant.update({
       where: { id: participantId },
       data: { paid, paidAt: paid ? new Date() : null },
@@ -342,7 +344,7 @@ export class PrismaStore implements AppStore {
         include: { penalties: { orderBy: { sequence: "asc" } } },
       });
       if (!participant) return null;
-      if (!participant.active) throw new Error("Нельзя штрафовать заменённого игрока");
+      if (!participant.active) throw new Error(participant.excludedAt ? "Игрок уже исключён после четвёртого нарушения" : "Нельзя штрафовать заменённого игрока");
       if (participant.paid) throw new Error("Нельзя изменить уже выплаченную долю");
       const sequence = participant.penalties.length + 1;
       const penalty = calculatePenaltyAmount(participant.shareUahMinor, sequence);
@@ -352,6 +354,12 @@ export class PrismaStore implements AppStore {
       await database.escortPenalty.create({
         data: { participantId, sequence, percentage: penalty.percentage, amountUahMinor, reason, createdById: adminId },
       });
+      if (sequence === 4) {
+        await database.escortParticipant.update({
+          where: { id: participantId },
+          data: { active: false, excludedAt: new Date() },
+        });
+      }
       return database.escortOrder.findUnique({ where: { id: orderId }, include: escortOrderInclude });
     }, { isolationLevel: "Serializable" });
     return order ? mapEscortOrder(order) : null;
@@ -368,7 +376,8 @@ export class PrismaStore implements AppStore {
         include: { penalties: true },
       });
       if (!participant) return null;
-      if (!participant.active) throw new Error("Этот игрок уже заменён");
+      if (!participant.active && !participant.excludedAt) throw new Error("Этот игрок уже заменён");
+      if (participant.replacedAt) throw new Error("Этот игрок уже заменён");
       if (participant.paid) throw new Error("Нельзя заменить игрока после выплаты");
       const withheld = participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
       const transferredShare = participant.shareUahMinor - withheld;
@@ -394,6 +403,14 @@ export class PrismaStore implements AppStore {
   async getShopBankBalance(): Promise<bigint> {
     const result = await this.prisma.escortPenalty.aggregate({ _sum: { amountUahMinor: true } });
     return result._sum.amountUahMinor ?? 0n;
+  }
+
+  async getCreatorBankBalance(): Promise<bigint> {
+    const result = await this.prisma.escortOrder.aggregate({
+      where: { status: { not: "cancelled" } },
+      _sum: { creatorAmountMinor: true },
+    });
+    return result._sum.creatorAmountMinor ?? 0n;
   }
 
   async findAdminByUsername(username: string): Promise<AdminRecord | null> {

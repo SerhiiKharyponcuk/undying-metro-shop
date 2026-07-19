@@ -194,10 +194,10 @@ describe("Undying Metro API", () => {
     expect(response.statusCode).toBe(201);
     expect(response.json()).toMatchObject({
       amountUah: "1000.00",
-      developerAmountUah: "100.00",
-      escortPoolUah: "900.00",
+      creatorAmountUah: "30.00",
+      escortPoolUah: "970.00",
     });
-    expect(response.json().participants.map((item: any) => item.shareUah)).toEqual(["300.00", "300.00", "300.00"]);
+    expect(response.json().participants.map((item: any) => item.shareUah)).toEqual(["323.34", "323.33", "323.33"]);
   });
 
   it("защищает расчёты сопровождений и ограничивает число игроков", async () => {
@@ -271,10 +271,12 @@ describe("Undying Metro API", () => {
     }
     const player = lastResponse!.json().participants[0];
     expect(player.penalties.map((penalty: any) => penalty.percentage)).toEqual([5, 10, 15, 50]);
-    expect(player.penaltyTotalUah).toBe("720.00");
-    expect(player.payoutUah).toBe("180.00");
+    expect(player.penaltyTotalUah).toBe("776.00");
+    expect(player.payoutUah).toBe("194.00");
+    expect(player).toMatchObject({ active: false, nextPenaltyPercent: null });
+    expect(player.excludedAt).toBeTruthy();
     const bank = await app.inject({ method: "GET", url: "/api/admin/shop-bank", headers: { cookie } });
-    expect(bank.json().balanceUah).toBe("720.00");
+    expect(bank.json()).toMatchObject({ penaltyBalanceUah: "776.00", creatorBalanceUah: "30.00" });
     const fifth = await app.inject({
       method: "POST",
       url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}/penalties`,
@@ -308,9 +310,9 @@ describe("Undying Metro API", () => {
     expect(replaced.statusCode).toBe(200);
     const [oldPlayer, newPlayer] = replaced.json().participants;
     expect(oldPlayer).toMatchObject({ active: false, payoutUah: "0.00" });
-    expect(newPlayer).toMatchObject({ active: true, shareUah: "855.00", payoutUah: "855.00", nextPenaltyPercent: 5 });
+    expect(newPlayer).toMatchObject({ active: true, shareUah: "921.50", payoutUah: "921.50", nextPenaltyPercent: 5 });
     expect(newPlayer.replacementForId).toBe(oldPlayer.id);
-    expect(replaced.json().bankFromPenaltiesUah).toBe("45.00");
+    expect(replaced.json().bankFromPenaltiesUah).toBe("48.50");
   });
 
   it("создаёт заявку и разрешает доступ только с секретным токеном", async () => {

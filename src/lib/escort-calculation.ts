@@ -31,13 +31,13 @@ export function calculateEscortSplit(originalAmountMinor: bigint, exchangeRateMi
     throw new Error("Укажите от одного до трёх сопровождающих");
   }
   const amountUahMinor = roundedDivide(originalAmountMinor * exchangeRateMicros, RATE_SCALE);
-  const developerAmountMinor = roundedDivide(amountUahMinor, 10n);
-  const escortPoolMinor = amountUahMinor - developerAmountMinor;
+  const creatorAmountMinor = roundedDivide(amountUahMinor * 3n, 100n);
+  const escortPoolMinor = amountUahMinor - creatorAmountMinor;
   const count = BigInt(escortCount);
   const baseShare = escortPoolMinor / count;
   const remainder = escortPoolMinor % count;
   const shares = Array.from({ length: escortCount }, (_, index) => baseShare + (BigInt(index) < remainder ? 1n : 0n));
-  return { amountUahMinor, developerAmountMinor, escortPoolMinor, shares };
+  return { amountUahMinor, creatorAmountMinor, escortPoolMinor, shares };
 }
 
 export function calculatePenaltyAmount(shareUahMinor: bigint, sequence: number): { percentage: number; amountUahMinor: bigint } {

@@ -50,6 +50,7 @@ export interface NewEscortOrder {
   rateSource: ExchangeRateSource;
   amountUahMinor: bigint;
   developerAmountMinor: bigint;
+  creatorAmountMinor: bigint;
   escortPoolMinor: bigint;
   orderDate: Date;
   createdById: string;
@@ -87,6 +88,7 @@ export interface AppStore {
     input: { name: string; contact: string | null },
   ): Promise<EscortOrderRecord | null>;
   getShopBankBalance(): Promise<bigint>;
+  getCreatorBankBalance(): Promise<bigint>;
 
   findAdminByUsername(username: string): Promise<AdminRecord | null>;
   createAdmin(username: string, passwordHash: string): Promise<AdminRecord>;
