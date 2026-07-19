@@ -397,7 +397,7 @@ export class MemoryStore implements AppStore {
     return { items: values.slice((page - 1) * pageSize, page * pageSize), total: values.length, page, pageSize };
   }
 
-  async deleteEscortPenalty(id: string): Promise<EscortPenaltyListRecord | null> {
+  async deleteEscortPenalty(id: string, clearPaid = false): Promise<EscortPenaltyListRecord | null> {
     let found: { order: EscortOrderRecord; participant: EscortOrderRecord["participants"][number]; penalty: EscortOrderRecord["participants"][number]["penalties"][number] } | null = null;
     for (const order of this.escortOrders) {
       for (const participant of order.participants) {
@@ -406,7 +406,11 @@ export class MemoryStore implements AppStore {
       }
     }
     if (!found) return null;
-    if (found.participant.paid) throw new Error("Сначала снимите отметку о выплате игроку");
+    if (found.participant.paid) {
+      if (!clearPaid) throw new Error("Сначала снимите отметку о выплате игроку");
+      found.participant.paid = false;
+      found.participant.paidAt = null;
+    }
     const result: EscortPenaltyListRecord = {
       ...found.penalty,
       participantName: found.participant.name,

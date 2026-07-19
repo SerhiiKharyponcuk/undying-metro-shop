@@ -666,7 +666,7 @@ export class PrismaStore implements AppStore {
     return { items: items.map(mapPenaltyList), total, page, pageSize };
   }
 
-  async deleteEscortPenalty(id: string): Promise<EscortPenaltyListRecord | null> {
+  async deleteEscortPenalty(id: string, clearPaid = false): Promise<EscortPenaltyListRecord | null> {
     const deleted = await this.prisma.$transaction(async (database) => {
       const penalty = await database.escortPenalty.findUnique({
         where: { id },
@@ -676,7 +676,13 @@ export class PrismaStore implements AppStore {
         },
       });
       if (!penalty) return null;
-      if (penalty.participant.paid) throw new Error("Сначала снимите отметку о выплате игроку");
+      if (penalty.participant.paid) {
+        if (!clearPaid) throw new Error("Сначала снимите отметку о выплате игроку");
+        await database.escortParticipant.update({
+          where: { id: penalty.participantId },
+          data: { paid: false, paidAt: null },
+        });
+      }
 
       const violationDate = penalty.violationDate
         ?? new Date(Date.UTC(penalty.createdAt.getUTCFullYear(), penalty.createdAt.getUTCMonth(), penalty.createdAt.getUTCDate()));

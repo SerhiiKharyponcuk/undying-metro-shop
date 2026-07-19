@@ -759,7 +759,13 @@
         if (!window.confirm(`Удалить штраф игрока ${penalty.participantName}? Проценты и блокировка будут пересчитаны.`)) return;
         remove.disabled = true;
         try {
-          await api(`/api/admin/penalties/${penalty.id}`, { method: "DELETE" });
+          try {
+            await api(`/api/admin/penalties/${penalty.id}`, { method: "DELETE", body: JSON.stringify({ clearPaid: false }) });
+          } catch (error) {
+            const needsPaymentReset = error.message.includes("Сначала снимите отметку о выплате");
+            if (!needsPaymentReset || !window.confirm(`Игрок ${penalty.participantName} отмечен выплаченным. Снять отметку о выплате и удалить штраф?`)) throw error;
+            await api(`/api/admin/penalties/${penalty.id}`, { method: "DELETE", body: JSON.stringify({ clearPaid: true }) });
+          }
           globalStatus.textContent = "Штраф удалён, выплаты и ограничения пересчитаны";
           await Promise.all([loadPenalties(), loadEscortOrders(), loadPlayerProfiles(), loadFinancialReport(), loadAuditLogs()]);
         } catch (error) {

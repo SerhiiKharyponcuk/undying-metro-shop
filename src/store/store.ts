@@ -105,7 +105,7 @@ export interface AppStore {
   updateEscortParticipantPaid(orderId: string, participantId: string, paid: boolean): Promise<EscortOrderRecord | null>;
   penalizeEscortParticipant(orderId: string, participantId: string, reason: string, adminId: string): Promise<EscortOrderRecord | null>;
   listEscortPenalties(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPenaltyListRecord>>;
-  deleteEscortPenalty(id: string): Promise<EscortPenaltyListRecord | null>;
+  deleteEscortPenalty(id: string, clearPaid?: boolean): Promise<EscortPenaltyListRecord | null>;
   replaceEscortParticipant(
     orderId: string,
     participantId: string,

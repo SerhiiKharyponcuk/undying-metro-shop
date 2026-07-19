@@ -537,17 +537,32 @@ describe("Undying Metro API", () => {
     expect(penalties.statusCode).toBe(200);
     expect(penalties.json().total).toBe(4);
     const fourth = penalties.json().items.find((penalty: any) => penalty.percentage === 50);
+    const paid = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/escort-orders/${created.json().id}/participants/${participantId}`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { paid: true },
+    });
+    expect(paid.statusCode).toBe(200);
+    const protectedRemoval = await app.inject({
+      method: "DELETE",
+      url: `/api/admin/penalties/${fourth.id}`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { clearPaid: false },
+    });
+    expect(protectedRemoval.statusCode).toBe(409);
     const removed = await app.inject({
       method: "DELETE",
       url: `/api/admin/penalties/${fourth.id}`,
       headers: { cookie, "x-csrf-token": csrf },
+      payload: { clearPaid: true },
     });
     expect(removed.statusCode).toBe(200);
 
     const orders = await app.inject({ method: "GET", url: "/api/admin/escort-orders?status=planned&page=1&pageSize=50", headers: { cookie } });
     const player = orders.json().items.find((order: any) => order.id === created.json().id).participants[0];
     expect(player.penalties.map((penalty: any) => penalty.percentage)).toEqual([5, 10, 15]);
-    expect(player).toMatchObject({ active: true, permanentlyBanned: false, dailyViolationCount: 3 });
+    expect(player).toMatchObject({ active: true, permanentlyBanned: false, dailyViolationCount: 3, paid: false });
     expect(player.suspendedUntil).toBeNull();
     expect(player.penaltyTotalUah).toBe("261.00");
     const remaining = await app.inject({ method: "GET", url: "/api/admin/penalties?query=7000000031&page=1&pageSize=50", headers: { cookie } });

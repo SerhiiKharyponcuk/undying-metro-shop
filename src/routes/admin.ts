@@ -63,6 +63,7 @@ const escortOrderQuery = z.object({
 });
 const escortStatusBody = z.object({ status: z.enum(["planned", "completed", "paid", "cancelled"]) });
 const participantPaidBody = z.object({ paid: z.boolean() });
+const penaltyDeleteBody = z.object({ clearPaid: z.boolean().optional().default(false) });
 const participantParams = z.object({ id: z.string().uuid(), participantId: z.string().uuid() });
 const rateQuery = z.object({ currency: z.enum(["UAH", "EUR", "USD"]), date: orderDateValue });
 const penaltyBody = z.object({ reason: plainText(3, 300) });
@@ -539,9 +540,10 @@ export async function registerAdminRoutes(
 
   app.delete("/api/admin/penalties/:id", { preHandler: [requireAdmin, requireCsrf, requireOperator] }, async (request, reply) => {
     const params = idParams.safeParse(request.params);
-    if (!params.success) return reply.code(400).send({ error: "Некорректный ID штрафа" });
+    const body = penaltyDeleteBody.safeParse(request.body ?? {});
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Некорректные данные удаления штрафа" });
     try {
-      const penalty = await store.deleteEscortPenalty(params.data.id);
+      const penalty = await store.deleteEscortPenalty(params.data.id, body.data.clearPaid);
       if (!penalty) return reply.code(404).send({ error: "Штраф не найден" });
       await audit(request, "escort_penalty.deleted", "escort_penalty", penalty.id, {
         playerGameId: penalty.playerGameId,
@@ -550,6 +552,7 @@ export async function registerAdminRoutes(
         percentage: penalty.percentage,
         amountUah: formatMinor(penalty.amountUahMinor),
         reason: penalty.reason,
+        paymentCleared: body.data.clearPaid,
       });
       return { deletedId: penalty.id };
     } catch (error) {
