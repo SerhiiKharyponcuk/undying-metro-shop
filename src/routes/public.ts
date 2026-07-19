@@ -182,8 +182,19 @@ export async function registerPublicRoutes(
     const update = telegramUpdate.safeParse(request.body);
     if (!update.success || !update.data.message) return { ok: true };
     const chatId = String(update.data.message.chat.id);
-    if (!config.telegramAdminChatIds.includes(chatId)) return reply.code(403).send({ ok: false });
-    const [command, orderRef, value, assignment] = update.data.message.text.trim().split(/\s+/);
+    if (!config.telegramAdminChatIds.includes(chatId)) {
+      if (config.telegramBotToken) {
+        await fetch(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, text: `Ваш Chat ID: ${chatId}\nДодайте його в Render → TELEGRAM_ADMIN_CHAT_IDS, щоб увімкнути керування.` }),
+          signal: AbortSignal.timeout(7_000),
+        }).catch(() => undefined);
+      }
+      return { ok: true };
+    }
+    const [rawCommand, orderRef, value, assignment] = update.data.message.text.trim().split(/\s+/);
+    const command = rawCommand?.split("@")[0]?.toLowerCase();
     const orders = await store.listEscortOrders(undefined, 1, 50);
     const order = orderRef ? orders.items.find((item) => item.id === orderRef || item.id.startsWith(orderRef)) : null;
     if (command === "/status" && order && ["planned", "completed", "paid", "cancelled"].includes(value || "")) {
@@ -202,7 +213,7 @@ export async function registerPublicRoutes(
     } else if (command === "/orders") {
       await notifier.operation("telegram_orders", ["📅 Активні замовлення", ...orders.items.slice(0, 10).map((item) => `${item.id.slice(0, 8)} • ${item.orderDate.toISOString().slice(0, 10)} • ${item.buyerName} • ${item.status}`)]);
     } else {
-      await notifier.operation("telegram_help", ["Команди:", "/orders", "/status ID planned|completed|paid|cancelled", "/assign ID PUBG_ID invited|accepted|declined"]);
+      await notifier.operation("telegram_help", ["🤖 Undying Metro Bot", "Команди:", "/orders — показати замовлення", "/status ID planned|completed|paid|cancelled", "/assign ID PUBG_ID invited|accepted|declined"]);
     }
     return { ok: true };
   });

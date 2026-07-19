@@ -32,6 +32,19 @@ async function configureTelegramWebhook(): Promise<void> {
       signal: AbortSignal.timeout(7_000),
     });
     if (!response.ok) throw new Error(`Telegram HTTP ${response.status}`);
+    const commandsResponse = await fetch(`https://api.telegram.org/bot${config.telegramBotToken}/setMyCommands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ commands: [
+        { command: "start", description: "Відкрити меню керування" },
+        { command: "help", description: "Показати доступні команди" },
+        { command: "orders", description: "Показати активні замовлення" },
+        { command: "status", description: "Змінити статус замовлення" },
+        { command: "assign", description: "Змінити призначення гравця" },
+      ] }),
+      signal: AbortSignal.timeout(7_000),
+    });
+    if (!commandsResponse.ok) throw new Error(`Telegram commands HTTP ${commandsResponse.status}`);
     app.log.info({ webhookUrl }, "Telegram webhook configured");
   } catch (error) {
     app.log.error({ err: error }, "Unable to configure Telegram webhook");
