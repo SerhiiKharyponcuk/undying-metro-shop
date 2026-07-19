@@ -59,7 +59,7 @@ window.UNDYING_CONFIG = Object.freeze({
 Не меняйте ключи `manager_1` и `manager_2`: по ним backend синхронизирует трёхминутную занятость. Имена, описания, Telegram-ссылки и аватарки можно менять свободно.
 
 2. В GitHub откройте **Settings → Pages** и выберите публикацию ветки `main` из `/ (root)`.
-3. Пользовательский сайт будет доступен по адресу `https://serhiikharyponcuk.github.io/undying-metro-shop/`, панель — в `/admin/`.
+3. Пользовательский сайт будет доступен по адресу `https://serhiikharyponcuk.github.io/undying-metro-shop/`, отдельный вход в панель — через `/admin.html` (сама панель находится в `/admin/`).
 4. Убедитесь, что адрес GitHub Pages добавлен в разрешённые домены виджета Turnstile.
 
 ## 6. Локальная разработка

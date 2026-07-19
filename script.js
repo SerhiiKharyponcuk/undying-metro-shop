@@ -13,6 +13,7 @@ const loaderPercent = document.querySelector("#loaderPercent");
 const linkTransition = document.querySelector("#linkTransition");
 const transitionEyebrow = document.querySelector("#transitionEyebrow");
 const transitionTitle = document.querySelector("#transitionTitle");
+const lightMotionQuery = window.matchMedia("(max-width: 600px), (pointer: coarse)");
 let toastTimer;
 let loadingProgress = 0;
 
@@ -82,6 +83,7 @@ function getLinkLabel(link) {
 }
 
 function addTapRipple(link, event) {
+  if (lightMotionQuery.matches) return;
   const rect = link.getBoundingClientRect();
   const ripple = document.createElement("span");
   ripple.className = "tap-ripple";
@@ -94,8 +96,10 @@ function addTapRipple(link, event) {
 function openWithTransition(url, link) {
   const telegramLink = link.dataset.link === "telegram" || /(?:t\.me|telegram\.me)/i.test(url) || url.startsWith("tg:");
   const label = getLinkLabel(link);
+  const lightMotion = lightMotionQuery.matches;
 
   linkTransition.classList.toggle("is-telegram", telegramLink);
+  linkTransition.classList.toggle("is-lite", lightMotion);
   transitionEyebrow.textContent = telegramLink ? "ОТКРЫВАЕМ TELEGRAM" : "ПЕРЕХОДИМ ПО ССЫЛКЕ";
   transitionTitle.textContent = label;
   linkTransition.classList.add("is-active");
@@ -103,7 +107,7 @@ function openWithTransition(url, link) {
 
   window.setTimeout(() => {
     window.location.assign(url);
-  }, 1050);
+  }, lightMotion ? 580 : 1050);
 }
 
 window.UNDYING_NAVIGATION = Object.freeze({
@@ -136,7 +140,9 @@ window.addEventListener("pageshow", () => {
 const particles = document.querySelector("#particles");
 const particleColors = ["#55f4e1", "#19cbbd", "#ffb348"];
 
-for (let index = 0; index < 22; index += 1) {
+const particleCount = lightMotionQuery.matches ? 8 : 22;
+
+for (let index = 0; index < particleCount; index += 1) {
   const particle = document.createElement("span");
   particle.className = "particle";
   particle.style.setProperty("--x", `${Math.random() * 100}%`);
@@ -151,7 +157,7 @@ for (let index = 0; index < 22; index += 1) {
   particles.appendChild(particle);
 }
 
-if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && !lightMotionQuery.matches) {
   window.addEventListener(
     "pointermove",
     (event) => {
