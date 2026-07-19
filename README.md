@@ -1,24 +1,97 @@
 # Undying Metro Shop
 
-Адаптивная страница со ссылками, анимированным фоном, мобильными эффектами и собственной аватаркой магазина.
+Полноценный русскоязычный сайт Metro-магазина: сохранён исходный дизайн, фирменная аватарка, загрузка, движущийся фон, мобильная адаптация и анимации переходов. К статическому frontend добавлены отзывы, поддержка с перепиской и защищённая административная панель.
 
-При первом открытии показывается фирменная Metro-загрузка. Перед переходом по готовой ссылке появляется отдельная плавная анимация; для Telegram используется специальный экран-портал.
+## Архитектура
 
-## Как открыть
+- **Frontend:** существующие HTML, CSS и JavaScript, размещение на GitHub Pages.
+- **Backend:** Node.js 22, TypeScript и Fastify.
+- **Данные:** PostgreSQL и Prisma ORM.
+- **Защита:** Argon2id, серверные сессии с подписанной HttpOnly-cookie, CSRF, CORS allowlist, Helmet, rate limit, Turnstile, строгая Zod-валидация.
+- **Уведомления:** Telegram Bot API для нескольких администраторов.
+- **Хостинг API:** Render Blueprint из `render.yaml`.
 
-Откройте `index.html` в браузере или загрузите весь проект на любой статический хостинг (GitHub Pages, Vercel, Netlify).
+## Возможности
 
-## Как добавить ссылки
+Посетитель может отправить отзыв со звёздной оценкой. Отзыв получает статус `pending` и появляется публично только после публикации администратором. Доступна подгрузка следующих отзывов и официальный ответ магазина.
 
-Откройте `script.js` и вставьте адреса в объект `LINKS`:
+Поддержка создаёт заявку с уникальным публичным номером и случайным секретным ключом. Ключ хранится на сервере только как Argon2id-хеш. Пользователь может вернуться к заявке в том же браузере или открыть её по номеру и ключу, читать историю и отвечать менеджеру.
 
-```js
-const LINKS = {
-  shop: "https://t.me/...",
-  managers: "https://t.me/...",
-  donate: "https://...",
-  telegram: "https://t.me/...",
-};
+Панель `/admin/` позволяет модерировать отзывы, отвечать от имени магазина, искать и фильтровать заявки, менять их статусы и вести переписку. Публичного или стандартного пароля нет.
+
+## Быстрый запуск
+
+Требуются Node.js 22 и PostgreSQL.
+
+```bash
+cp .env.example .env
+npm ci
+npm run prisma:dev
+npm run admin:create
+npm run dev
 ```
 
-Если поле оставить пустым, кнопка покажет аккуратное сообщение-заглушку.
+Перед `admin:create` временно заполните в `.env` переменные `ADMIN_INITIAL_USERNAME` и `ADMIN_INITIAL_PASSWORD`. После создания администратора удалите пароль из окружения.
+
+Frontend обращается к API через единственную настройку в `config.js`:
+
+```js
+window.UNDYING_CONFIG = Object.freeze({
+  API_BASE_URL: "https://ваш-api.onrender.com",
+  TURNSTILE_SITE_KEY: "публичный-site-key",
+});
+```
+
+## Переменные окружения
+
+Все поддерживаемые значения перечислены в `.env.example`:
+
+- `DATABASE_URL` — строка подключения PostgreSQL;
+- `CORS_ORIGINS` — точные разрешённые origin через запятую;
+- `COOKIE_SECRET`, `TICKET_TOKEN_PEPPER`, `IP_HASH_SALT` — три независимых случайных секрета длиной от 32 символов;
+- `SESSION_TTL_HOURS` — срок жизни административной сессии;
+- `TURNSTILE_REQUIRED`, `TURNSTILE_SECRET_KEY` — защита публичных форм;
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_IDS` — бот и список Chat ID;
+- `ADMIN_PANEL_URL` — публичный адрес панели для ссылок в Telegram.
+
+В production Turnstile обязателен. Настоящие пароли, токены и ключи не должны попадать в GitHub.
+
+## API
+
+Публичные маршруты:
+
+- `GET /api/health`
+- `GET /api/reviews`
+- `POST /api/reviews`
+- `POST /api/support/tickets`
+- `GET /api/support/tickets/:number`
+- `POST /api/support/tickets/:number/messages`
+
+Для чтения и ответа в заявке клиент передаёт секретный ключ в заголовке `x-ticket-token`. API никогда не возвращает хеш токена, IP-хеш, пароли или сессионные токены.
+
+Административные маршруты:
+
+- `POST /api/admin/login`, `POST /api/admin/logout`
+- `GET /api/admin/dashboard`
+- `GET /api/admin/reviews`, `PATCH /api/admin/reviews/:id`
+- `GET /api/admin/tickets`, `GET /api/admin/tickets/:id`
+- `POST /api/admin/tickets/:id/messages`
+- `PATCH /api/admin/tickets/:id/status`
+
+Изменяющие административные запросы требуют действующую HttpOnly-сессию и `x-csrf-token`.
+
+## Команды
+
+```bash
+npm run dev             # API с автоматическим перезапуском
+npm run typecheck       # проверка TypeScript
+npm test                # тесты API и безопасности
+npm run build           # production-сборка в dist/
+npm run prisma:migrate  # применение production-миграций
+npm run admin:create    # безопасное создание первого администратора
+npm start               # запуск собранного API
+```
+
+Тесты покрывают создание и модерацию отзывов, заявки и переписку, вход и права администратора, CSRF, rate limit, XSS, неверные данные и недействительный ключ заявки.
+
+Подробная инструкция по Render, GitHub Pages, Telegram, Cloudflare Turnstile и резервному копированию находится в [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

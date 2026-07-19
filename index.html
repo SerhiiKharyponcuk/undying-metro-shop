@@ -12,6 +12,7 @@
     <link rel="icon" href="assets/undying-metro-avatar.webp" type="image/webp" />
     <link rel="preload" href="assets/undying-metro-avatar.webp" as="image" />
     <script>document.documentElement.classList.add("js");</script>
+    <script src="config.js"></script>
     <link rel="stylesheet" href="styles.css" />
   </head>
 
@@ -89,6 +90,39 @@
             </span>
           </a>
 
+          <a class="service-card service-card--reviews" href="#reviews" data-community="reviews">
+            <span class="service-card__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z" />
+              </svg>
+            </span>
+            <span class="service-card__copy">
+              <span class="service-card__tag">МНЕНИЕ ПОКУПАТЕЛЕЙ</span>
+              <strong>Отзывы</strong>
+              <small>Посмотри оценки магазина или оставь свой отзыв.</small>
+            </span>
+            <span class="service-card__arrow" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+            </span>
+          </a>
+
+          <a class="service-card service-card--support" href="#support" data-community="support">
+            <span class="service-card__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M4 13a8 8 0 0 1 16 0v5a2 2 0 0 1-2 2h-2v-7h4M4 13v7H2a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h2Z" />
+                <path d="M16 20c0 1-1.8 2-4 2" />
+              </svg>
+            </span>
+            <span class="service-card__copy">
+              <span class="service-card__tag">СЛУЖБА ПОДДЕРЖКИ</span>
+              <strong>Помощь 24/7</strong>
+              <small>Создай обращение и следи за ответами менеджера.</small>
+            </span>
+            <span class="service-card__arrow" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+            </span>
+          </a>
+
           <a class="service-card service-card--manager" href="#" data-link="managers">
             <span class="service-card__icon" aria-hidden="true">
               <svg viewBox="0 0 24 24">
@@ -146,6 +180,122 @@
       </span>
     </div>
 
+    <div class="community-modal" id="communityModal" aria-hidden="true">
+      <button class="community-modal__backdrop" type="button" data-community-close aria-label="Закрыть окно"></button>
+      <section class="community-panel" role="dialog" aria-modal="true" aria-labelledby="communityTitle">
+        <header class="community-panel__header">
+          <div class="community-panel__brand">
+            <img src="assets/undying-metro-avatar.webp" alt="" />
+            <span>
+              <small>СИСТЕМА UNDYING METRO</small>
+              <strong id="communityTitle">Отзывы и поддержка</strong>
+            </span>
+          </div>
+          <button class="icon-button" type="button" data-community-close aria-label="Закрыть">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </header>
+
+        <nav class="community-tabs" aria-label="Разделы">
+          <button class="community-tab is-active" type="button" data-community-tab="reviews">Отзывы</button>
+          <button class="community-tab" type="button" data-community-tab="support">Поддержка</button>
+          <button class="community-tab community-tab--ticket" type="button" data-community-tab="ticket" hidden>Заявка</button>
+        </nav>
+
+        <div class="community-panel__body">
+          <section class="community-view is-active" data-community-view="reviews">
+            <div class="community-intro">
+              <span class="community-intro__icon">★</span>
+              <span><strong>Отзывы покупателей</strong><small>Публикуются только после проверки администратором.</small></span>
+            </div>
+            <div class="reviews-list" id="reviewsList" aria-live="polite"></div>
+            <button class="secondary-button" id="reviewsMore" type="button" hidden>Показать ещё</button>
+
+            <div class="form-divider"><span>Оставить отзыв</span></div>
+            <form class="metro-form" id="reviewForm" novalidate>
+              <div class="field-grid field-grid--two">
+                <label class="field"><span>Ваше имя</span><input name="name" minlength="2" maxlength="64" autocomplete="name" required /></label>
+                <label class="field"><span>Telegram <small>(необязательно)</small></span><input name="contact" maxlength="128" placeholder="@username" autocomplete="off" /></label>
+              </div>
+              <fieldset class="rating-field">
+                <legend>Ваша оценка</legend>
+                <div class="rating-input" aria-label="Оценка от 1 до 5">
+                  <input id="rating5" name="rating" value="5" type="radio" required /><label for="rating5" title="5 звёзд">★</label>
+                  <input id="rating4" name="rating" value="4" type="radio" /><label for="rating4" title="4 звезды">★</label>
+                  <input id="rating3" name="rating" value="3" type="radio" /><label for="rating3" title="3 звезды">★</label>
+                  <input id="rating2" name="rating" value="2" type="radio" /><label for="rating2" title="2 звезды">★</label>
+                  <input id="rating1" name="rating" value="1" type="radio" /><label for="rating1" title="1 звезда">★</label>
+                </div>
+              </fieldset>
+              <label class="field"><span>Текст отзыва</span><textarea name="text" minlength="10" maxlength="1200" rows="4" required></textarea><small class="field__counter" data-counter-for="text">0 / 1200</small></label>
+              <input type="hidden" name="turnstileToken" />
+              <div class="turnstile-slot" data-turnstile="review"></div>
+              <p class="form-status" data-form-status="review" role="status"></p>
+              <button class="primary-button" type="submit"><span>Отправить на модерацию</span><i aria-hidden="true"></i></button>
+            </form>
+          </section>
+
+          <section class="community-view" data-community-view="support" hidden>
+            <div class="community-intro community-intro--support">
+              <span class="community-intro__icon">?</span>
+              <span><strong>Создать обращение</strong><small>После отправки мы выдадим номер заявки и секретный ключ.</small></span>
+            </div>
+            <button class="last-ticket-button" id="lastTicketButton" type="button" hidden>
+              <span>Последняя сохранённая заявка</span><strong id="lastTicketNumber"></strong>
+            </button>
+            <form class="metro-form" id="supportForm" novalidate>
+              <div class="field-grid field-grid--two">
+                <label class="field"><span>Ваше имя</span><input name="name" minlength="2" maxlength="64" autocomplete="name" required /></label>
+                <label class="field"><span>Способ связи</span><select name="contactType"><option value="telegram">Telegram</option><option value="email">Email</option></select></label>
+              </div>
+              <label class="field"><span>Контакт</span><input name="contact" maxlength="160" placeholder="@username" required /></label>
+              <label class="field"><span>Категория</span><select name="category"><option value="purchase">Покупка</option><option value="payment">Оплата</option><option value="product_problem">Проблема с товаром</option><option value="partnership">Сотрудничество</option><option value="complaint">Жалоба</option><option value="other">Другое</option></select></label>
+              <label class="field"><span>Тема</span><input name="subject" minlength="3" maxlength="140" required /></label>
+              <label class="field"><span>Сообщение</span><textarea name="message" minlength="10" maxlength="3000" rows="5" required></textarea><small class="field__counter" data-counter-for="message">0 / 3000</small></label>
+              <input type="hidden" name="turnstileToken" />
+              <div class="turnstile-slot" data-turnstile="support"></div>
+              <p class="form-status" data-form-status="support" role="status"></p>
+              <button class="primary-button" type="submit"><span>Создать обращение</span><i aria-hidden="true"></i></button>
+            </form>
+            <div class="form-divider"><span>Открыть существующую заявку</span></div>
+            <form class="metro-form metro-form--compact" id="ticketLookupForm">
+              <label class="field"><span>Номер заявки</span><input name="number" placeholder="UMS-260719-AB12" required /></label>
+              <label class="field"><span>Секретный ключ</span><input name="token" type="password" autocomplete="off" required /></label>
+              <p class="form-status" data-form-status="lookup" role="status"></p>
+              <button class="secondary-button" type="submit">Открыть заявку</button>
+            </form>
+          </section>
+
+          <section class="community-view" data-community-view="ticket" hidden>
+            <div class="ticket-heading">
+              <button class="text-button" type="button" data-community-tab="support">← Назад</button>
+              <span class="ticket-status" id="ticketStatus"></span>
+            </div>
+            <h2 id="ticketNumber"></h2>
+            <p class="ticket-subject" id="ticketSubject"></p>
+            <div class="ticket-messages" id="ticketMessages" aria-live="polite"></div>
+            <form class="metro-form metro-form--reply" id="ticketReplyForm">
+              <label class="field"><span>Новое сообщение</span><textarea name="message" minlength="2" maxlength="3000" rows="3" required></textarea></label>
+              <p class="form-status" data-form-status="reply" role="status"></p>
+              <button class="primary-button" type="submit"><span>Отправить</span><i aria-hidden="true"></i></button>
+            </form>
+          </section>
+
+          <section class="community-success" id="communitySuccess" hidden>
+            <div class="community-success__mark">✓</div>
+            <small>ЗАЯВКА ЗАРЕГИСТРИРОВАНА</small>
+            <h2 id="successTitle">Обращение создано</h2>
+            <p id="successText"></p>
+            <div class="credential-card" id="credentialCard" hidden>
+              <span><small>Номер заявки</small><strong id="successTicketNumber"></strong></span>
+              <button type="button" id="copyTicketData">Копировать данные</button>
+            </div>
+            <button class="primary-button" id="successAction" type="button">Открыть заявку</button>
+          </section>
+        </div>
+      </section>
+    </div>
+
     <div class="link-transition" id="linkTransition" aria-hidden="true">
       <div class="link-transition__backdrop" aria-hidden="true"></div>
       <div class="link-transition__portal" aria-hidden="true">
@@ -168,5 +318,6 @@
     </div>
 
     <script src="script.js"></script>
+    <script src="community.js"></script>
   </body>
 </html>

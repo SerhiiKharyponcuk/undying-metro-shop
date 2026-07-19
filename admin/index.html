@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#05090b" />
+    <title>Undying Metro — Админ-панель</title>
+    <link rel="icon" href="../assets/undying-metro-avatar.webp" type="image/webp" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="../config.js"></script>
+  </head>
+  <body>
+    <div class="admin-world" aria-hidden="true"><span></span><span></span></div>
+
+    <main class="login-shell" id="loginView">
+      <section class="login-card">
+        <img src="../assets/undying-metro-avatar.webp" alt="Эмблема Undying Metro Shop" />
+        <small>ЗАЩИЩЁННЫЙ ДОСТУП</small>
+        <h1>Панель управления</h1>
+        <p>Доступ только для авторизованных администраторов.</p>
+        <form id="loginForm">
+          <label><span>Логин</span><input name="username" autocomplete="username" minlength="3" maxlength="64" required /></label>
+          <label><span>Пароль</span><input name="password" type="password" autocomplete="current-password" minlength="10" required /></label>
+          <p class="admin-status" id="loginStatus" role="status"></p>
+          <button class="admin-primary" type="submit"><span>Войти</span><i></i></button>
+        </form>
+      </section>
+    </main>
+
+    <div class="admin-app" id="adminApp" hidden>
+      <header class="admin-header">
+        <a class="admin-brand" href="../index.html">
+          <img src="../assets/undying-metro-avatar.webp" alt="" />
+          <span><small>СИСТЕМА UNDYING METRO</small><strong>Управление</strong></span>
+        </a>
+        <div class="admin-user"><span id="adminUsername"></span><button id="logoutButton" type="button">Выйти</button></div>
+      </header>
+
+      <main class="admin-main">
+        <section class="admin-heading">
+          <div><small>ОПЕРАТИВНЫЙ ЦЕНТР</small><h1>Управление магазином</h1><p>Отзывы, обращения и ответы пользователям.</p></div>
+          <button class="refresh-button" id="refreshButton" type="button">↻ Обновить</button>
+        </section>
+
+        <section class="stat-grid" aria-label="Статистика">
+          <article><small>Новые отзывы</small><strong id="statReviews">0</strong><span class="stat-dot stat-dot--amber"></span></article>
+          <article><small>Новые заявки</small><strong id="statOpen">0</strong><span class="stat-dot"></span></article>
+          <article><small>В работе</small><strong id="statProgress">0</strong><span class="stat-dot stat-dot--blue"></span></article>
+          <article><small>Опубликовано</small><strong id="statApproved">0</strong><span class="stat-dot stat-dot--muted"></span></article>
+        </section>
+
+        <nav class="admin-tabs">
+          <button class="is-active" type="button" data-admin-tab="reviews">Отзывы <b id="reviewBadge">0</b></button>
+          <button type="button" data-admin-tab="tickets">Поддержка <b id="ticketBadge">0</b></button>
+        </nav>
+
+        <section class="admin-section is-active" data-admin-section="reviews">
+          <div class="section-toolbar">
+            <div><h2>Модерация отзывов</h2><p>Публикуйте только проверенные сообщения.</p></div>
+            <label><span>Статус</span><select id="reviewFilter"><option value="pending">На модерации</option><option value="approved">Опубликованные</option><option value="rejected">Отклонённые</option><option value="">Все</option></select></label>
+          </div>
+          <div class="admin-list" id="adminReviews"></div>
+        </section>
+
+        <section class="admin-section" data-admin-section="tickets" hidden>
+          <div class="section-toolbar">
+            <div><h2>Обращения поддержки</h2><p>Открывайте заявки и отвечайте пользователям.</p></div>
+            <div class="toolbar-fields">
+              <input id="ticketSearch" placeholder="Номер, имя или тема" />
+              <select id="ticketFilter"><option value="">Все статусы</option><option value="open">Новые</option><option value="in_progress">В работе</option><option value="waiting_user">Ожидают пользователя</option><option value="closed">Закрытые</option></select>
+            </div>
+          </div>
+          <div class="ticket-layout">
+            <div class="admin-list admin-list--tickets" id="adminTickets"></div>
+            <aside class="ticket-detail" id="adminTicketDetail">
+              <div class="admin-empty"><strong>Выберите обращение</strong><small>Здесь появится история переписки.</small></div>
+            </aside>
+          </div>
+        </section>
+        <p class="global-status" id="globalStatus" role="status"></p>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

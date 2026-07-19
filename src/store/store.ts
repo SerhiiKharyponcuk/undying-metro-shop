@@ -1,0 +1,74 @@
+import type {
+  AdminRecord,
+  AdminSessionRecord,
+  ContactType,
+  DashboardCounts,
+  NotificationState,
+  Page,
+  ReviewRecord,
+  ReviewStatus,
+  SupportMessageRecord,
+  SupportTicketRecord,
+  TicketCategory,
+  TicketStatus,
+} from "../types/domain.js";
+
+export interface NewReview {
+  name: string;
+  contact: string | null;
+  rating: number;
+  text: string;
+  contentHash: string;
+  ipHash: string;
+}
+
+export interface NewTicket {
+  publicNumber: string;
+  secretTokenHash: string;
+  name: string;
+  contactType: ContactType;
+  contact: string;
+  category: TicketCategory;
+  subject: string;
+  message: string;
+  ipHash: string;
+}
+
+export interface AppStore {
+  createReview(input: NewReview): Promise<ReviewRecord>;
+  hasRecentDuplicateReview(ipHash: string, contentHash: string, since: Date): Promise<boolean>;
+  listApprovedReviews(page: number, pageSize: number): Promise<Page<ReviewRecord>>;
+  listReviews(status: ReviewStatus | undefined, page: number, pageSize: number): Promise<Page<ReviewRecord>>;
+  updateReview(
+    id: string,
+    input: { status: ReviewStatus; adminReply: string | null; moderatedById: string },
+  ): Promise<ReviewRecord | null>;
+
+  createTicket(input: NewTicket): Promise<SupportTicketRecord>;
+  findTicketByNumber(publicNumber: string): Promise<SupportTicketRecord | null>;
+  findTicketById(id: string): Promise<SupportTicketRecord | null>;
+  addTicketMessage(ticketId: string, sender: "user" | "admin", message: string, adminId?: string): Promise<SupportMessageRecord>;
+  listTickets(status: TicketStatus | undefined, query: string | undefined, page: number, pageSize: number): Promise<Page<SupportTicketRecord>>;
+  updateTicketStatus(id: string, status: TicketStatus, assignedAdminId: string): Promise<SupportTicketRecord | null>;
+
+  findAdminByUsername(username: string): Promise<AdminRecord | null>;
+  createAdmin(username: string, passwordHash: string): Promise<AdminRecord>;
+  createAdminSession(input: {
+    tokenHash: string;
+    csrfToken: string;
+    adminId: string;
+    expiresAt: Date;
+  }): Promise<AdminSessionRecord>;
+  findAdminSession(tokenHash: string): Promise<AdminSessionRecord | null>;
+  touchAdminSession(id: string, now: Date): Promise<void>;
+  deleteAdminSession(tokenHash: string): Promise<void>;
+  deleteExpiredAdminSessions(now: Date): Promise<void>;
+
+  dashboardCounts(): Promise<DashboardCounts>;
+  createNotificationLog(input: {
+    eventType: string;
+    destination: string;
+    status: NotificationState;
+    error?: string;
+  }): Promise<void>;
+}

@@ -1,0 +1,144 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ReviewStatus {
+  pending
+  approved
+  rejected
+}
+
+enum TicketStatus {
+  open
+  in_progress
+  waiting_user
+  closed
+}
+
+enum ContactType {
+  telegram
+  email
+}
+
+enum TicketCategory {
+  purchase
+  payment
+  product_problem
+  partnership
+  complaint
+  other
+}
+
+enum MessageSender {
+  user
+  admin
+}
+
+enum NotificationStatus {
+  sent
+  failed
+  skipped
+}
+
+model Admin {
+  id             String           @id @default(uuid())
+  username       String           @unique @db.VarChar(64)
+  passwordHash   String           @map("password_hash")
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  sessions       AdminSession[]
+  moderated      Review[]         @relation("ReviewModerator")
+  assigned       SupportTicket[]  @relation("TicketAssignee")
+  supportReplies SupportMessage[] @relation("MessageAdmin")
+
+  @@map("admins")
+}
+
+model AdminSession {
+  id         String   @id @default(uuid())
+  tokenHash  String   @unique @map("token_hash") @db.VarChar(64)
+  csrfToken  String   @map("csrf_token") @db.VarChar(128)
+  adminId    String   @map("admin_id")
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  lastSeenAt DateTime @default(now()) @map("last_seen_at")
+  admin      Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([expiresAt])
+  @@map("admin_sessions")
+}
+
+model Review {
+  id            String       @id @default(uuid())
+  name          String       @db.VarChar(64)
+  contact       String?      @db.VarChar(128)
+  rating        Int
+  text          String       @db.VarChar(1200)
+  status        ReviewStatus @default(pending)
+  adminReply    String?      @map("admin_reply") @db.VarChar(1200)
+  contentHash   String       @map("content_hash") @db.VarChar(64)
+  ipHash        String       @map("ip_hash") @db.VarChar(64)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  moderatedAt   DateTime?    @map("moderated_at")
+  moderatedById String?      @map("moderated_by")
+  moderatedBy   Admin?       @relation("ReviewModerator", fields: [moderatedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([ipHash, contentHash, createdAt])
+  @@map("reviews")
+}
+
+model SupportTicket {
+  id               String          @id @default(uuid())
+  publicNumber     String          @unique @map("public_number") @db.VarChar(24)
+  secretTokenHash  String          @map("secret_token_hash")
+  name             String          @db.VarChar(64)
+  contactType      ContactType     @map("contact_type")
+  contact          String          @db.VarChar(160)
+  category         TicketCategory
+  subject          String          @db.VarChar(140)
+  status           TicketStatus    @default(open)
+  ipHash           String          @map("ip_hash") @db.VarChar(64)
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  assignedAdminId  String?         @map("assigned_admin_id")
+  assignedAdmin    Admin?          @relation("TicketAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
+  messages         SupportMessage[]
+
+  @@index([status, createdAt])
+  @@index([assignedAdminId])
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id            String        @id @default(uuid())
+  ticketId      String        @map("ticket_id")
+  senderType    MessageSender @map("sender_type")
+  senderAdminId String?       @map("sender_admin_id")
+  message       String        @db.VarChar(3000)
+  createdAt     DateTime      @default(now()) @map("created_at")
+  ticket        SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderAdmin   Admin?        @relation("MessageAdmin", fields: [senderAdminId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("support_messages")
+}
+
+model NotificationLog {
+  id          String             @id @default(uuid())
+  eventType   String             @map("event_type") @db.VarChar(64)
+  destination String             @db.VarChar(128)
+  status      NotificationStatus
+  error       String?            @db.VarChar(600)
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("notification_logs")
+}

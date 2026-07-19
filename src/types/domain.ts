@@ -1,0 +1,84 @@
+export type ReviewStatus = "pending" | "approved" | "rejected";
+export type TicketStatus = "open" | "in_progress" | "waiting_user" | "closed";
+export type ContactType = "telegram" | "email";
+export type TicketCategory =
+  | "purchase"
+  | "payment"
+  | "product_problem"
+  | "partnership"
+  | "complaint"
+  | "other";
+export type MessageSender = "user" | "admin";
+export type NotificationState = "sent" | "failed" | "skipped";
+
+export interface AdminRecord {
+  id: string;
+  username: string;
+  passwordHash: string;
+  active: boolean;
+  createdAt: Date;
+}
+
+export interface AdminSessionRecord {
+  id: string;
+  tokenHash: string;
+  csrfToken: string;
+  adminId: string;
+  expiresAt: Date;
+  admin: AdminRecord;
+}
+
+export interface ReviewRecord {
+  id: string;
+  name: string;
+  contact: string | null;
+  rating: number;
+  text: string;
+  status: ReviewStatus;
+  adminReply: string | null;
+  contentHash: string;
+  ipHash: string;
+  createdAt: Date;
+  moderatedAt: Date | null;
+  moderatedById: string | null;
+}
+
+export interface SupportMessageRecord {
+  id: string;
+  ticketId: string;
+  senderType: MessageSender;
+  senderAdminId: string | null;
+  message: string;
+  createdAt: Date;
+}
+
+export interface SupportTicketRecord {
+  id: string;
+  publicNumber: string;
+  secretTokenHash: string;
+  name: string;
+  contactType: ContactType;
+  contact: string;
+  category: TicketCategory;
+  subject: string;
+  status: TicketStatus;
+  ipHash: string;
+  createdAt: Date;
+  updatedAt: Date;
+  assignedAdminId: string | null;
+  messages: SupportMessageRecord[];
+}
+
+export interface Page<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface DashboardCounts {
+  pendingReviews: number;
+  openTickets: number;
+  inProgressTickets: number;
+  totalApprovedReviews: number;
+}

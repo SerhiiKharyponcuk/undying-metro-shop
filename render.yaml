@@ -1,0 +1,42 @@
+databases:
+  - name: undying-metro-db
+    databaseName: undying_metro
+    user: undying_metro
+
+services:
+  - type: web
+    name: undying-metro-api
+    runtime: node
+    buildCommand: npm ci && npm run build
+    startCommand: npm run prisma:migrate && npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.17.0
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: undying-metro-db
+          property: connectionString
+      - key: CORS_ORIGINS
+        value: https://serhiikharyponcuk.github.io
+      - key: COOKIE_SECRET
+        generateValue: true
+      - key: TICKET_TOKEN_PEPPER
+        generateValue: true
+      - key: IP_HASH_SALT
+        generateValue: true
+      - key: SESSION_TTL_HOURS
+        value: 24
+      - key: TURNSTILE_REQUIRED
+        value: true
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ADMIN_CHAT_IDS
+        sync: false
+      - key: ADMIN_PANEL_URL
+        value: https://serhiikharyponcuk.github.io/undying-metro-shop/admin/
