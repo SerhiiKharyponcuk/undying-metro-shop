@@ -131,7 +131,11 @@ textarea { line-height:1.5; resize:vertical; }
 .discipline-rules__mark { display:grid; place-items:center; flex:0 0 32px; width:32px; height:32px; border-radius:10px; color:#06110f; background:var(--cyan); font-weight:900; }
 .discipline-rules small,.shop-bank small { color:#69cfc2; font-size:7px; letter-spacing:.14em; }
 .discipline-rules h3 { margin:4px 0 8px; font-size:12px; }
-.discipline-rules ol { display:grid; gap:4px; margin:0; padding-left:17px; color:#849794; font-size:8px; line-height:1.45; }
+.discipline-rules ol { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px 20px; margin:0; padding-left:17px; color:#849794; font-size:8px; line-height:1.45; }
+.discipline-penalties { display:grid; gap:4px; margin-top:11px; padding:10px; border:1px solid rgba(255,147,62,.14); border-radius:10px; background:rgba(255,121,39,.045); }
+.discipline-penalties strong { color:#ffb36a; font-size:9px; }
+.discipline-penalties span { color:#a99786; font-size:7px; line-height:1.45; }
+.discipline-penalties small { color:#ef8547; font-size:7px; font-weight:800; text-transform:uppercase; }
 .rules-poster-link { display:inline-flex; margin-top:9px; padding:7px 9px; border:1px solid rgba(85,244,225,.14); border-radius:8px; color:#91e6dc; background:rgba(85,244,225,.045); font-size:8px; text-decoration:none; }
 .bank-stack { display:grid; gap:9px; }
 .shop-bank { display:flex; flex-direction:column; justify-content:center; padding:16px; box-shadow:inset 0 0 28px rgba(85,244,225,.025); }
@@ -168,6 +172,9 @@ textarea { line-height:1.5; resize:vertical; }
 .escort-preview__developer strong { color:#d5bfff; }
 .escort-submit { width:min(100%,260px); }
 .escort-orders { display:grid; gap:10px; }
+.completed-tabs { display:flex; gap:8px; margin-bottom:12px; }
+.completed-tabs button { min-height:36px; padding:8px 13px; border:1px solid rgba(85,244,225,.14); border-radius:10px; color:#91aaa7; background:rgba(85,244,225,.035); font-size:8px; font-weight:800; }
+.completed-tabs button.is-active { color:#07110f; background:var(--cyan); }
 .escort-order { padding:14px; border:1px solid rgba(255,255,255,.07); border-radius:15px; background:rgba(255,255,255,.025); }
 .escort-order__head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
 .escort-order__head h3 { margin:0; font-size:13px; }
@@ -215,6 +222,7 @@ textarea { line-height:1.5; resize:vertical; }
 
 @media (max-width:800px) {
   .discipline-panel { grid-template-columns:1fr; }
+  .discipline-rules ol { grid-template-columns:1fr; }
   .stat-grid { grid-template-columns:repeat(2,1fr); }
   .admin-review { grid-template-columns:1fr; }
   .ticket-layout { grid-template-columns:1fr; }

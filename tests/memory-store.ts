@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AdminSessionPresence, AppStore, NewEscortOrder, NewReview, NewTicket } from "../src/store/store.js";
+import type { AdminSessionPresence, AppStore, NewEscortOrder, NewReview, NewTicket, VerifiedReviewResult } from "../src/store/store.js";
 import type {
   AdminRecord,
   AdminSessionRecord,
@@ -41,10 +41,17 @@ export class MemoryStore implements AppStore {
     return { claimed: true, busyUntil };
   }
 
-  async createReview(input: NewReview): Promise<ReviewRecord> {
+  async createVerifiedReview(input: NewReview): Promise<VerifiedReviewResult> {
+    const eligibleOrders = this.escortOrders
+      .filter((order) => order.buyerGameId === input.buyerGameId && ["completed", "paid"].includes(order.status))
+      .sort((left, right) => right.orderDate.getTime() - left.orderDate.getTime());
+    if (!eligibleOrders.length) return { status: "not_found" };
+    const order = eligibleOrders.find((item) => !this.reviews.some((review) => review.escortOrderId === item.id));
+    if (!order) return { status: "already_reviewed" };
     const value: ReviewRecord = {
       id: randomUUID(),
       ...input,
+      escortOrderId: order.id,
       status: "pending",
       adminReply: null,
       createdAt: new Date(),
@@ -52,7 +59,7 @@ export class MemoryStore implements AppStore {
       moderatedById: null,
     };
     this.reviews.push(value);
-    return value;
+    return { status: "created", review: value };
   }
 
   async hasRecentDuplicateReview(ipHash: string, contentHash: string, since: Date): Promise<boolean> {
@@ -345,6 +352,7 @@ export class MemoryStore implements AppStore {
       openTickets: this.tickets.filter((item) => item.status === "open").length,
       inProgressTickets: this.tickets.filter((item) => item.status === "in_progress").length,
       totalApprovedReviews: this.reviews.filter((item) => item.status === "approved").length,
+      completedEscortOrders: this.escortOrders.filter((item) => ["completed", "paid"].includes(item.status)).length,
     };
   }
 

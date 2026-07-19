@@ -50,9 +50,10 @@ describe("Undying Metro API", () => {
     await app.close();
   });
 
-  const reviewPayload = (text = "Отличный магазин и быстрая помощь") => ({
+  const reviewPayload = (text = "Отличный магазин и быстрая помощь", buyerGameId = "1234567890") => ({
     name: "Сергей",
     contact: "@serhii_test",
+    buyerGameId,
     rating: 5,
     text,
     turnstileToken: "",
@@ -78,6 +79,29 @@ describe("Undying Metro API", () => {
     const body = response.json();
     const cookie = String(response.headers["set-cookie"]).split(";")[0];
     return { cookie, csrf: body.csrfToken, accessMode: body.accessMode as "operator" | "observer" };
+  }
+
+  async function seedCompletedPurchase(buyerGameId = "1234567890") {
+    const order = await store.createEscortOrder({
+      item: "Проверенная покупка",
+      buyerName: "Покупатель",
+      buyerContact: null,
+      buyerGameId,
+      originalAmountMinor: 0n,
+      currency: "UAH",
+      exchangeRateMicros: 1_000_000n,
+      rateSource: "uah",
+      amountUahMinor: 0n,
+      developerAmountMinor: 0n,
+      directorAmountMinor: 0n,
+      creatorAmountMinor: 0n,
+      escortPoolMinor: 0n,
+      orderDate: new Date("2026-07-19T00:00:00.000Z"),
+      createdById: store.admins[0]!.id,
+      participants: [{ name: "Сопровождающий", contact: null, shareUahMinor: 0n }],
+    });
+    await store.updateEscortOrderStatus(order.id, "completed");
+    return order;
   }
 
   it("показывает дружелюбный статус на корневом адресе API", async () => {
@@ -118,10 +142,12 @@ describe("Undying Metro API", () => {
   });
 
   it("создаёт отзыв со статусом pending и отправляет уведомление", async () => {
+    await seedCompletedPurchase();
     const response = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload() });
     expect(response.statusCode).toBe(201);
     expect(response.json().status).toBe("pending");
     expect(store.reviews).toHaveLength(1);
+    expect(store.reviews[0]).toMatchObject({ buyerGameId: "1234567890", escortOrderId: store.escortOrders[0]!.id });
     expect(notifier.reviews).toEqual([store.reviews[0]!.id]);
 
     const publicReviews = await app.inject({ method: "GET", url: "/api/reviews" });
@@ -135,12 +161,27 @@ describe("Undying Metro API", () => {
     expect(invalid.statusCode).toBe(400);
   });
 
+  it("разрешает отзыв только по PUBG ID завершённого или оплаченного заказа", async () => {
+    const invalidId = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload("Хороший сервис и быстрая помощь", "abc") });
+    expect(invalidId.statusCode).toBe(400);
+
+    const unknownId = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload("Хороший сервис и быстрая помощь", "9999999999") });
+    expect(unknownId.statusCode).toBe(403);
+    expect(unknownId.json().error).toContain("PUBG ID");
+
+    await seedCompletedPurchase("9999999999");
+    const verified = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload("Хороший сервис и быстрая помощь", "9999999999") });
+    expect(verified.statusCode).toBe(201);
+  });
+
   it("не принимает повтор одного отзыва", async () => {
+    await seedCompletedPurchase();
     expect((await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload() })).statusCode).toBe(201);
     expect((await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload() })).statusCode).toBe(409);
   });
 
   it("ограничивает частую отправку отзывов", async () => {
+    await Promise.all([seedCompletedPurchase(), seedCompletedPurchase(), seedCompletedPurchase()]);
     for (let index = 0; index < 3; index += 1) {
       const response = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload(`Уникальный хороший отзыв номер ${index}`) });
       expect(response.statusCode).toBe(201);
@@ -166,6 +207,7 @@ describe("Undying Metro API", () => {
     ].map((url) => app.inject({ method: "GET", url, headers: { cookie: second.cookie } })));
     expect(observerReads.every((response) => response.statusCode === 200)).toBe(true);
 
+    await seedCompletedPurchase();
     const review = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload() });
     const denied = await app.inject({
       method: "PATCH",
@@ -211,6 +253,7 @@ describe("Undying Metro API", () => {
   });
 
   it("позволяет администратору опубликовать отзыв и добавить ответ", async () => {
+    await seedCompletedPurchase();
     const created = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload() });
     const { cookie, csrf } = await login();
     const update = await app.inject({
@@ -227,6 +270,7 @@ describe("Undying Metro API", () => {
   it("защищает административные маршруты и CSRF", async () => {
     expect((await app.inject({ method: "GET", url: "/api/admin/dashboard" })).statusCode).toBe(401);
     const { cookie } = await login();
+    await seedCompletedPurchase();
     const review = await app.inject({ method: "POST", url: "/api/reviews", payload: reviewPayload() });
     const noCsrf = await app.inject({ method: "PATCH", url: `/api/admin/reviews/${review.json().id}`, headers: { cookie }, payload: { status: "approved" } });
     expect(noCsrf.statusCode).toBe(403);
@@ -242,6 +286,7 @@ describe("Undying Metro API", () => {
         item: "Сопровождение Metro Royale",
         buyerName: "Покупатель",
         buyerContact: "@buyer_test",
+        buyerGameId: "1234567890",
         amount: "1000.00",
         currency: "UAH",
         orderDate: "2026-07-19",
@@ -254,12 +299,25 @@ describe("Undying Metro API", () => {
     });
     expect(response.statusCode).toBe(201);
     expect(response.json()).toMatchObject({
+      buyerGameId: "1234567890",
       amountUah: "1000.00",
       directorAmountUah: "30.00",
       creatorAmountUah: "100.00",
       escortPoolUah: "870.00",
     });
     expect(response.json().participants.map((item: any) => item.shareUah)).toEqual(["290.00", "290.00", "290.00"]);
+
+    const completed = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/escort-orders/${response.json().id}/status`,
+      headers: { cookie, "x-csrf-token": csrf },
+      payload: { status: "completed" },
+    });
+    expect(completed.statusCode).toBe(200);
+    const completedOrders = await app.inject({ method: "GET", url: "/api/admin/escort-orders?status=completed", headers: { cookie } });
+    expect(completedOrders.json().items.map((item: any) => item.id)).toContain(response.json().id);
+    const dashboard = await app.inject({ method: "GET", url: "/api/admin/dashboard", headers: { cookie } });
+    expect(dashboard.json().counts.completedEscortOrders).toBe(1);
   });
 
   it("исключает отменённое сопровождение из банков директора и создателя", async () => {
@@ -271,6 +329,7 @@ describe("Undying Metro API", () => {
       payload: {
         item: "Сопровождение",
         buyerName: "Покупатель",
+        buyerGameId: "1234567890",
         amount: "1000",
         currency: "UAH",
         orderDate: "2026-07-19",
@@ -304,6 +363,7 @@ describe("Undying Metro API", () => {
       payload: {
         item: "Сопровождение",
         buyerName: "Покупатель",
+        buyerGameId: "1234567890",
         amount: "100",
         currency: "UAH",
         orderDate: "2026-07-19",
@@ -330,7 +390,7 @@ describe("Undying Metro API", () => {
       method: "POST",
       url: "/api/admin/escort-orders",
       headers: { cookie, "x-csrf-token": csrf },
-      payload: { item: "Сопровождение", buyerName: "Покупатель", amount: "500", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок" }] },
+      payload: { item: "Сопровождение", buyerName: "Покупатель", buyerGameId: "1234567890", amount: "500", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок" }] },
     });
     const order = store.escortOrders[0]!;
     const participant = order.participants[0]!;
@@ -350,7 +410,7 @@ describe("Undying Metro API", () => {
       method: "POST",
       url: "/api/admin/escort-orders",
       headers: { cookie, "x-csrf-token": csrf },
-      payload: { item: "Сопровождение", buyerName: "Покупатель", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок" }] },
+      payload: { item: "Сопровождение", buyerName: "Покупатель", buyerGameId: "1234567890", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Игрок" }] },
     });
     const participantId = created.json().participants[0].id;
     let lastResponse;
@@ -386,7 +446,7 @@ describe("Undying Metro API", () => {
       method: "POST",
       url: "/api/admin/escort-orders",
       headers: { cookie, "x-csrf-token": csrf },
-      payload: { item: "Сопровождение", buyerName: "Покупатель", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Первый игрок" }] },
+      payload: { item: "Сопровождение", buyerName: "Покупатель", buyerGameId: "1234567890", amount: "1000", currency: "UAH", orderDate: "2026-07-19", escorts: [{ name: "Первый игрок" }] },
     });
     const participantId = created.json().participants[0].id;
     await app.inject({

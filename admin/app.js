@@ -132,13 +132,14 @@
     document.querySelector("#statApproved").textContent = counts.totalApprovedReviews;
     document.querySelector("#reviewBadge").textContent = counts.pendingReviews;
     document.querySelector("#ticketBadge").textContent = counts.openTickets;
+    document.querySelector("#completedBadge").textContent = counts.completedEscortOrders;
   }
 
   async function bootstrap() {
     try {
       const dashboard = await api("/api/admin/dashboard", { method: "GET" });
       showApp(dashboard);
-      await Promise.all([loadReviews(), loadTickets(), loadEscortOrders()]);
+      await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts()]);
     } catch (error) {
       showLogin(error.status === 401 ? "" : error.message);
     }
@@ -172,6 +173,7 @@
   document.querySelectorAll("[data-admin-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       activateTab(button.dataset.adminTab);
+      if (button.dataset.adminTab === "completed") void loadCompletedEscorts();
     });
   });
 
@@ -305,6 +307,7 @@
         item: escortForm.elements.purchaseItem.value,
         buyerName: escortForm.elements.buyerName.value,
         buyerContact: escortForm.elements.buyerContact.value,
+        buyerGameId: escortForm.elements.buyerGameId.value,
         amount: escortForm.elements.amount.value,
         currency: escortForm.elements.currency.value,
         exchangeRate: rateWasLoadedFromNbu ? "" : escortForm.elements.exchangeRate.value,
@@ -321,7 +324,7 @@
       rateWasLoadedFromNbu = false;
       escortPeople.replaceChildren();
       addEscortRow();
-      await loadEscortOrders();
+      await Promise.all([loadEscortOrders(), loadCompletedEscorts(), refreshDashboard()]);
     } catch (error) {
       status.textContent = error.message;
     } finally {
@@ -338,7 +341,12 @@
     const title = document.createElement("h3");
     title.textContent = order.item;
     const meta = document.createElement("p");
-    meta.textContent = `${order.buyerName}${order.buyerContact ? ` • ${order.buyerContact}` : ""} • ${new Date(order.orderDate).toLocaleDateString("ru-RU")}`;
+    meta.textContent = [
+      order.buyerName,
+      order.buyerGameId ? `PUBG ID ${order.buyerGameId}` : "",
+      order.buyerContact || "",
+      new Date(order.orderDate).toLocaleDateString("ru-RU"),
+    ].filter(Boolean).join(" • ");
     heading.append(title, meta);
     const statusSelect = document.createElement("select");
     writeControl(statusSelect);
@@ -346,8 +354,10 @@
       const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = order.status === value; statusSelect.append(option);
     });
     statusSelect.addEventListener("change", async () => {
-      try { await api(`/api/admin/escort-orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: statusSelect.value }) }); await loadEscortOrders(); }
-      catch (error) { globalStatus.textContent = error.message; }
+      try {
+        await api(`/api/admin/escort-orders/${order.id}/status`, { method: "PATCH", body: JSON.stringify({ status: statusSelect.value }) });
+        await Promise.all([loadEscortOrders(), loadCompletedEscorts(), refreshDashboard()]);
+      } catch (error) { globalStatus.textContent = error.message; }
     });
     head.append(heading, statusSelect);
     const values = document.createElement("div");
@@ -459,6 +469,26 @@
     }
   }
 
+  async function loadCompletedEscorts() {
+    const container = document.querySelector("#completedEscortOrders");
+    container.replaceChildren(empty("Загрузка…", "Получаем выполненные сопровождения"));
+    try {
+      const [completed, paid] = await Promise.all([
+        api("/api/admin/escort-orders?status=completed&page=1&pageSize=50", { method: "GET" }),
+        api("/api/admin/escort-orders?status=paid&page=1&pageSize=50", { method: "GET" }),
+      ]);
+      const items = [...completed.items, ...paid.items]
+        .sort((left, right) => new Date(right.orderDate) - new Date(left.orderDate));
+      container.replaceChildren();
+      if (!items.length) {
+        container.append(empty("Выполненных сопровождений пока нет", "После смены статуса на «Завершено» или «Выплачено» заказ появится здесь."));
+      }
+      items.forEach((order) => container.append(escortOrderElement(order)));
+    } catch (error) {
+      container.replaceChildren(empty("Ошибка загрузки", error.message));
+    }
+  }
+
   document.querySelector("#escortFilter").addEventListener("change", () => void loadEscortOrders());
   escortForm.elements.orderDate.value = new Date().toISOString().slice(0, 10);
   escortForm.elements.exchangeRate.readOnly = true;
@@ -479,7 +509,11 @@
     const text = document.createElement("p");
     text.textContent = review.text;
     const meta = document.createElement("small");
-    meta.textContent = `${new Date(review.createdAt).toLocaleString("ru-RU")}${review.contact ? ` • ${review.contact}` : ""}`;
+    meta.textContent = [
+      new Date(review.createdAt).toLocaleString("ru-RU"),
+      review.buyerGameId ? `PUBG ID ${review.buyerGameId}` : "",
+      review.contact || "",
+    ].filter(Boolean).join(" • ");
     content.append(head, text, meta);
     const actions = document.createElement("div");
     actions.className = "review-actions";
@@ -638,7 +672,7 @@
   async function refreshAll() {
     globalStatus.textContent = "";
     await refreshDashboard();
-    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders()]);
+    await Promise.all([loadReviews(), loadTickets(), loadEscortOrders(), loadCompletedEscorts()]);
     if (activeTicketId) await loadTicketDetail(activeTicketId);
   }
 
@@ -651,6 +685,10 @@
     }
     if (activeTab === "escorts") {
       await loadEscortOrders();
+      return;
+    }
+    if (activeTab === "completed") {
+      await loadCompletedEscorts();
       return;
     }
     await loadReviews();
@@ -673,6 +711,11 @@
     }
     if (section === "escorts") {
       activateTab("escorts");
+      return;
+    }
+    if (section === "completed") {
+      activateTab("completed");
+      await loadCompletedEscorts();
     }
   }
 

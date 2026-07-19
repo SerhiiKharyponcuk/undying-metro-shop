@@ -91,6 +91,7 @@ model EscortOrder {
   item                 String              @db.VarChar(160)
   buyerName            String              @map("buyer_name") @db.VarChar(64)
   buyerContact         String?             @map("buyer_contact") @db.VarChar(128)
+  buyerGameId          String?             @map("buyer_game_id") @db.VarChar(20)
   originalAmountMinor  BigInt              @map("original_amount_minor")
   currency             OrderCurrency
   exchangeRateMicros   BigInt              @map("exchange_rate_micros")
@@ -107,8 +108,10 @@ model EscortOrder {
   updatedAt            DateTime            @updatedAt @map("updated_at")
   createdBy            Admin               @relation("EscortOrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
   participants         EscortParticipant[]
+  review               Review?
 
   @@index([status, orderDate])
+  @@index([buyerGameId, status])
   @@index([createdById])
   @@map("escort_orders")
 }
@@ -178,14 +181,18 @@ model Review {
   text          String       @db.VarChar(1200)
   status        ReviewStatus @default(pending)
   adminReply    String?      @map("admin_reply") @db.VarChar(1200)
+  buyerGameId   String?      @map("buyer_game_id") @db.VarChar(20)
+  escortOrderId String?      @unique @map("escort_order_id")
   contentHash   String       @map("content_hash") @db.VarChar(64)
   ipHash        String       @map("ip_hash") @db.VarChar(64)
   createdAt     DateTime     @default(now()) @map("created_at")
   moderatedAt   DateTime?    @map("moderated_at")
   moderatedById String?      @map("moderated_by")
   moderatedBy   Admin?       @relation("ReviewModerator", fields: [moderatedById], references: [id], onDelete: SetNull)
+  escortOrder   EscortOrder? @relation(fields: [escortOrderId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
+  @@index([buyerGameId])
   @@index([ipHash, contentHash, createdAt])
   @@map("reviews")
 }

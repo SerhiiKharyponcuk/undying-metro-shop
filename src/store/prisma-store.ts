@@ -14,7 +14,7 @@ import type {
   SupportTicketRecord,
   TicketStatus,
 } from "../types/domain.js";
-import type { AdminSessionPresence, AppStore, NewEscortOrder, NewReview, NewTicket } from "./store.js";
+import type { AdminSessionPresence, AppStore, NewEscortOrder, NewReview, NewTicket, VerifiedReviewResult } from "./store.js";
 import { calculatePenaltyAmount } from "../lib/escort-calculation.js";
 
 const escortOrderInclude = {
@@ -120,6 +120,8 @@ function mapReview(value: any): ReviewRecord {
     text: value.text,
     status: value.status,
     adminReply: value.adminReply,
+    buyerGameId: value.buyerGameId,
+    escortOrderId: value.escortOrderId,
     contentHash: value.contentHash,
     ipHash: value.ipHash,
     createdAt: value.createdAt,
@@ -164,6 +166,7 @@ function mapEscortOrder(value: any): EscortOrderRecord {
     item: value.item,
     buyerName: value.buyerName,
     buyerContact: value.buyerContact,
+    buyerGameId: value.buyerGameId,
     originalAmountMinor: value.originalAmountMinor,
     currency: value.currency,
     exchangeRateMicros: value.exchangeRateMicros,
@@ -229,8 +232,32 @@ export class PrismaStore implements AppStore {
     return { claimed: false, busyUntil: current?.busyUntil ?? now };
   }
 
-  async createReview(input: NewReview): Promise<ReviewRecord> {
-    return mapReview(await this.prisma.review.create({ data: input as any }));
+  async createVerifiedReview(input: NewReview): Promise<VerifiedReviewResult> {
+    try {
+      return await this.prisma.$transaction(async (database) => {
+        const eligibleWhere = {
+          buyerGameId: input.buyerGameId,
+          status: { in: ["completed", "paid"] as EscortOrderStatus[] },
+        };
+        const eligible = await database.escortOrder.findFirst({ where: eligibleWhere, select: { id: true } });
+        if (!eligible) return { status: "not_found" as const };
+
+        const available = await database.escortOrder.findFirst({
+          where: { ...eligibleWhere, review: { is: null } },
+          orderBy: [{ orderDate: "desc" }, { createdAt: "desc" }],
+          select: { id: true },
+        });
+        if (!available) return { status: "already_reviewed" as const };
+
+        const review = await database.review.create({
+          data: { ...input, escortOrderId: available.id },
+        });
+        return { status: "created" as const, review: mapReview(review) };
+      });
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === "P2002") return { status: "already_reviewed" };
+      throw error;
+    }
   }
 
   async hasRecentDuplicateReview(ipHash: string, contentHash: string, since: Date): Promise<boolean> {
@@ -544,13 +571,14 @@ export class PrismaStore implements AppStore {
   }
 
   async dashboardCounts(): Promise<DashboardCounts> {
-    const [pendingReviews, openTickets, inProgressTickets, totalApprovedReviews] = await this.prisma.$transaction([
+    const [pendingReviews, openTickets, inProgressTickets, totalApprovedReviews, completedEscortOrders] = await this.prisma.$transaction([
       this.prisma.review.count({ where: { status: "pending" } }),
       this.prisma.supportTicket.count({ where: { status: "open" } }),
       this.prisma.supportTicket.count({ where: { status: "in_progress" } }),
       this.prisma.review.count({ where: { status: "approved" } }),
+      this.prisma.escortOrder.count({ where: { status: { in: ["completed", "paid"] } } }),
     ]);
-    return { pendingReviews, openTickets, inProgressTickets, totalApprovedReviews };
+    return { pendingReviews, openTickets, inProgressTickets, totalApprovedReviews, completedEscortOrders };
   }
 
   async createNotificationLog(input: { eventType: string; destination: string; status: "sent" | "failed" | "skipped"; error?: string }): Promise<void> {

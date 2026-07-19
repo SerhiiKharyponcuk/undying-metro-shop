@@ -43,6 +43,8 @@ export interface ReviewRecord {
   text: string;
   status: ReviewStatus;
   adminReply: string | null;
+  buyerGameId: string | null;
+  escortOrderId: string | null;
   contentHash: string;
   ipHash: string;
   createdAt: Date;
@@ -88,6 +90,7 @@ export interface DashboardCounts {
   openTickets: number;
   inProgressTickets: number;
   totalApprovedReviews: number;
+  completedEscortOrders: number;
 }
 
 export interface ManagerAvailabilityRecord {
@@ -131,6 +134,7 @@ export interface EscortOrderRecord {
   item: string;
   buyerName: string;
   buyerContact: string | null;
+  buyerGameId: string | null;
   originalAmountMinor: bigint;
   currency: OrderCurrency;
   exchangeRateMicros: bigint;

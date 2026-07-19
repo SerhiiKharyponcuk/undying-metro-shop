@@ -24,6 +24,7 @@ export interface NewReview {
   contact: string | null;
   rating: number;
   text: string;
+  buyerGameId: string;
   contentHash: string;
   ipHash: string;
 }
@@ -40,6 +41,11 @@ export interface NewTicket {
   ipHash: string;
 }
 
+export type VerifiedReviewResult =
+  | { status: "created"; review: ReviewRecord }
+  | { status: "not_found" }
+  | { status: "already_reviewed" };
+
 export interface AdminSessionPresence {
   activeSince: Date;
   now: Date;
@@ -49,6 +55,7 @@ export interface NewEscortOrder {
   item: string;
   buyerName: string;
   buyerContact: string | null;
+  buyerGameId: string;
   originalAmountMinor: bigint;
   currency: OrderCurrency;
   exchangeRateMicros: bigint;
@@ -67,7 +74,7 @@ export interface AppStore {
   getManagerAvailability(managerKeys: string[]): Promise<ManagerAvailabilityRecord[]>;
   claimManager(managerKey: string, now: Date, busyUntil: Date): Promise<ManagerClaimResult>;
 
-  createReview(input: NewReview): Promise<ReviewRecord>;
+  createVerifiedReview(input: NewReview): Promise<VerifiedReviewResult>;
   hasRecentDuplicateReview(ipHash: string, contentHash: string, since: Date): Promise<boolean>;
   listApprovedReviews(page: number, pageSize: number): Promise<Page<ReviewRecord>>;
   listReviews(status: ReviewStatus | undefined, page: number, pageSize: number): Promise<Page<ReviewRecord>>;
