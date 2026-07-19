@@ -35,6 +35,7 @@ export async function bootstrapInitialAdmin(
     data: {
       username: input.data.username,
       passwordHash,
+      role: "owner",
     },
   });
   logger.info({ username: input.data.username }, "Initial administrator created automatically");

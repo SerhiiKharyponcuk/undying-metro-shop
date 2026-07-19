@@ -1,0 +1,27 @@
+name: Production health check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait for deployment and verify API
+        env:
+          PRODUCTION_HEALTH_URL: ${{ secrets.PRODUCTION_HEALTH_URL }}
+        run: |
+          test -n "$PRODUCTION_HEALTH_URL"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent --show-error --max-time 20 "$PRODUCTION_HEALTH_URL"; then
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 1

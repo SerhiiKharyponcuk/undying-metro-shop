@@ -69,10 +69,18 @@ enum AdminSessionAccessMode {
   observer
 }
 
+enum AdminRole {
+  owner
+  director
+  admin
+  observer
+}
+
 model Admin {
   id              String           @id @default(uuid())
   username        String           @unique @db.VarChar(64)
   passwordHash    String           @map("password_hash")
+  role            AdminRole        @default(admin)
   active          Boolean          @default(true)
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
@@ -82,6 +90,7 @@ model Admin {
   supportReplies  SupportMessage[] @relation("MessageAdmin")
   escortOrders    EscortOrder[]    @relation("EscortOrderCreator")
   escortPenalties EscortPenalty[]  @relation("EscortPenaltyAdmin")
+  auditLogs       AuditLog[]       @relation("AuditLogAdmin")
 
   @@map("admins")
 }
@@ -92,6 +101,9 @@ model EscortOrder {
   buyerName            String              @map("buyer_name") @db.VarChar(64)
   buyerContact         String?             @map("buyer_contact") @db.VarChar(128)
   buyerGameId          String?             @map("buyer_game_id") @db.VarChar(20)
+  reviewCodeHash       String?             @unique @map("review_code_hash") @db.VarChar(64)
+  reviewCodeIssuedAt   DateTime?           @map("review_code_issued_at")
+  reviewCodeConsumedAt DateTime?           @map("review_code_consumed_at")
   originalAmountMinor  BigInt              @map("original_amount_minor")
   currency             OrderCurrency
   exchangeRateMicros   BigInt              @map("exchange_rate_micros")
@@ -117,43 +129,67 @@ model EscortOrder {
 }
 
 model EscortParticipant {
-  id               String             @id @default(uuid())
-  orderId          String             @map("order_id")
-  name             String             @db.VarChar(64)
-  contact          String?            @db.VarChar(128)
-  shareUahMinor    BigInt             @map("share_uah_minor")
-  active           Boolean            @default(true)
-  paid             Boolean            @default(false)
-  paidAt           DateTime?          @map("paid_at")
-  replacedAt       DateTime?          @map("replaced_at")
-  excludedAt       DateTime?          @map("excluded_at")
-  replacementForId String?            @unique @map("replacement_for_id")
-  createdAt        DateTime           @default(now()) @map("created_at")
-  order            EscortOrder        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id               String               @id @default(uuid())
+  orderId          String               @map("order_id")
+  name             String               @db.VarChar(64)
+  contact          String?              @db.VarChar(128)
+  playerProfileId  String?              @map("player_profile_id")
+  shareUahMinor    BigInt               @map("share_uah_minor")
+  active           Boolean              @default(true)
+  paid             Boolean              @default(false)
+  paidAt           DateTime?            @map("paid_at")
+  replacedAt       DateTime?            @map("replaced_at")
+  excludedAt       DateTime?            @map("excluded_at")
+  replacementForId String?              @unique @map("replacement_for_id")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  order            EscortOrder          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  playerProfile    EscortPlayerProfile? @relation(fields: [playerProfileId], references: [id], onDelete: SetNull)
   penalties        EscortPenalty[]
-  replacementFor   EscortParticipant? @relation("ParticipantReplacement", fields: [replacementForId], references: [id], onDelete: SetNull)
-  replacement      EscortParticipant? @relation("ParticipantReplacement")
+  replacementFor   EscortParticipant?   @relation("ParticipantReplacement", fields: [replacementForId], references: [id], onDelete: SetNull)
+  replacement      EscortParticipant?   @relation("ParticipantReplacement")
 
   @@index([orderId])
+  @@index([playerProfileId])
   @@map("escort_participants")
 }
 
 model EscortPenalty {
-  id             String            @id @default(uuid())
-  participantId  String            @map("participant_id")
-  sequence       Int
-  percentage     Int
-  amountUahMinor BigInt            @map("amount_uah_minor")
-  reason         String            @db.VarChar(300)
-  createdById    String            @map("created_by_id")
-  createdAt      DateTime          @default(now()) @map("created_at")
-  participant    EscortParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
-  createdBy      Admin             @relation("EscortPenaltyAdmin", fields: [createdById], references: [id], onDelete: Restrict)
+  id              String               @id @default(uuid())
+  participantId   String               @map("participant_id")
+  playerProfileId String?              @map("player_profile_id")
+  sequence        Int
+  violationDate   DateTime?            @map("violation_date") @db.Date
+  percentage      Int
+  amountUahMinor  BigInt               @map("amount_uah_minor")
+  reason          String               @db.VarChar(300)
+  createdById     String               @map("created_by_id")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  participant     EscortParticipant    @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  playerProfile   EscortPlayerProfile? @relation(fields: [playerProfileId], references: [id], onDelete: SetNull)
+  createdBy       Admin                @relation("EscortPenaltyAdmin", fields: [createdById], references: [id], onDelete: Restrict)
 
-  @@unique([participantId, sequence])
+  @@unique([playerProfileId, violationDate, sequence])
+  @@index([participantId, sequence])
   @@index([createdAt])
   @@index([createdById])
   @@map("escort_penalties")
+}
+
+model EscortPlayerProfile {
+  id                String              @id @default(uuid())
+  gameId            String              @unique @map("game_id") @db.VarChar(20)
+  displayName       String              @map("display_name") @db.VarChar(64)
+  contact           String?             @db.VarChar(128)
+  suspendedUntil    DateTime?           @map("suspended_until")
+  permanentlyBanned Boolean             @default(false) @map("permanently_banned")
+  bannedAt          DateTime?           @map("banned_at")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+  participants      EscortParticipant[]
+  penalties         EscortPenalty[]
+
+  @@index([permanentlyBanned, suspendedUntil])
+  @@map("escort_player_profiles")
 }
 
 model AdminSession {
@@ -243,6 +279,22 @@ model NotificationLog {
 
   @@index([createdAt])
   @@map("notification_logs")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  adminId    String?  @map("admin_id")
+  action     String   @db.VarChar(80)
+  entityType String   @map("entity_type") @db.VarChar(64)
+  entityId   String?  @map("entity_id") @db.VarChar(64)
+  details    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+  admin      Admin?   @relation("AuditLogAdmin", fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([adminId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
 }
 
 model ManagerAvailability {

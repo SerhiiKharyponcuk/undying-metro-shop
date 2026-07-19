@@ -9,6 +9,7 @@ const environmentSchema = z
     CORS_ORIGINS: z.string().default("http://localhost:5500"),
     COOKIE_SECRET: z.string().min(32),
     TICKET_TOKEN_PEPPER: z.string().min(32),
+    REVIEW_CODE_PEPPER: z.string().min(32),
     IP_HASH_SALT: z.string().min(32),
     SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
     TURNSTILE_REQUIRED: z
@@ -45,6 +46,7 @@ export interface AppConfig {
   corsOrigins: string[];
   cookieSecret: string;
   ticketTokenPepper: string;
+  reviewCodePepper: string;
   ipHashSalt: string;
   sessionTtlHours: number;
   turnstileRequired: boolean;
@@ -74,6 +76,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
       .filter(Boolean),
     cookieSecret: value.COOKIE_SECRET,
     ticketTokenPepper: value.TICKET_TOKEN_PEPPER,
+    reviewCodePepper: value.REVIEW_CODE_PEPPER,
     ipHashSalt: value.IP_HASH_SALT,
     sessionTtlHours: value.SESSION_TTL_HOURS,
     turnstileRequired: value.TURNSTILE_REQUIRED,

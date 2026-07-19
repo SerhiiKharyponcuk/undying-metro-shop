@@ -28,6 +28,8 @@ services:
         generateValue: true
       - key: TICKET_TOKEN_PEPPER
         generateValue: true
+      - key: REVIEW_CODE_PEPPER
+        generateValue: true
       - key: IP_HASH_SALT
         generateValue: true
       - key: SESSION_TTL_HOURS
@@ -41,4 +43,4 @@ services:
       - key: TELEGRAM_ADMIN_CHAT_IDS
         sync: false
       - key: ADMIN_PANEL_URL
-        value: https://serhiikharyponcuk.github.io/undying-metro-shop/admin/
+        value: https://undying-metro-api.onrender.com/admin/

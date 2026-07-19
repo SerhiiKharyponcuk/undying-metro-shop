@@ -2,10 +2,14 @@ import { randomUUID } from "node:crypto";
 import type { AdminSessionPresence, AppStore, NewEscortOrder, NewReview, NewTicket, VerifiedReviewResult } from "../src/store/store.js";
 import type {
   AdminRecord,
+  AdminRole,
   AdminSessionRecord,
+  AuditLogRecord,
   DashboardCounts,
   EscortOrderRecord,
   EscortOrderStatus,
+  EscortPlayerProfileRecord,
+  FinancialSummary,
   ManagerAvailabilityRecord,
   ManagerClaimResult,
   NotificationState,
@@ -24,6 +28,8 @@ export class MemoryStore implements AppStore {
   reviews: ReviewRecord[] = [];
   tickets: SupportTicketRecord[] = [];
   escortOrders: EscortOrderRecord[] = [];
+  playerProfiles: EscortPlayerProfileRecord[] = [];
+  auditLogs: AuditLogRecord[] = [];
   notifications: Array<{ eventType: string; destination: string; status: NotificationState; error?: string }> = [];
   managerAvailability = new Map<string, Date>();
 
@@ -42,15 +48,18 @@ export class MemoryStore implements AppStore {
   }
 
   async createVerifiedReview(input: NewReview): Promise<VerifiedReviewResult> {
+    const { reviewCodeHash, ...reviewInput } = input;
     const eligibleOrders = this.escortOrders
-      .filter((order) => order.buyerGameId === input.buyerGameId && ["completed", "paid"].includes(order.status))
+      .filter((order) => order.buyerGameId === input.buyerGameId
+        && order.reviewCodeHash === reviewCodeHash
+        && ["completed", "paid"].includes(order.status))
       .sort((left, right) => right.orderDate.getTime() - left.orderDate.getTime());
     if (!eligibleOrders.length) return { status: "not_found" };
     const order = eligibleOrders.find((item) => !this.reviews.some((review) => review.escortOrderId === item.id));
     if (!order) return { status: "already_reviewed" };
     const value: ReviewRecord = {
       id: randomUUID(),
-      ...input,
+      ...reviewInput,
       escortOrderId: order.id,
       status: "pending",
       adminReply: null,
@@ -59,6 +68,7 @@ export class MemoryStore implements AppStore {
       moderatedById: null,
     };
     this.reviews.push(value);
+    order.reviewCodeConsumedAt = new Date();
     return { status: "created", review: value };
   }
 
@@ -156,16 +166,40 @@ export class MemoryStore implements AppStore {
   async createEscortOrder(input: NewEscortOrder): Promise<EscortOrderRecord> {
     const now = new Date();
     const orderId = randomUUID();
+    const prepared = input.participants.map((participant) => {
+      let profile = this.playerProfiles.find((item) => item.gameId === participant.gameId);
+      if (profile?.permanentlyBanned) throw new Error(`Игрок ${participant.name} заблокирован навсегда`);
+      if (profile?.suspendedUntil && profile.suspendedUntil > now) throw new Error(`Игрок ${participant.name} временно отстранён`);
+      if (!profile) {
+        profile = {
+          id: randomUUID(), gameId: participant.gameId, displayName: participant.name, contact: participant.contact,
+          suspendedUntil: null, permanentlyBanned: false, bannedAt: null, createdAt: now, updatedAt: now,
+          orderCount: 0, penaltyCount: 0, earnedUahMinor: 0n, withheldUahMinor: 0n,
+        };
+        this.playerProfiles.push(profile);
+      } else {
+        profile.displayName = participant.name;
+        profile.contact = participant.contact;
+        profile.updatedAt = now;
+      }
+      return { participant, profile };
+    });
     const order: EscortOrderRecord = {
       id: orderId,
       ...input,
+      reviewCodeConsumedAt: null,
       status: "planned",
       createdAt: now,
       updatedAt: now,
-      participants: input.participants.map((participant) => ({
+      participants: prepared.map(({ participant, profile }) => ({
         id: randomUUID(),
         orderId,
-        ...participant,
+        name: participant.name,
+        contact: participant.contact,
+        shareUahMinor: participant.shareUahMinor,
+        playerProfileId: profile.id,
+        playerProfile: profile,
+        dailyViolationCount: 0,
         active: true,
         paid: false,
         paidAt: null,
@@ -208,23 +242,48 @@ export class MemoryStore implements AppStore {
     const order = this.escortOrders.find((item) => item.id === orderId);
     const participant = order?.participants.find((item) => item.id === participantId);
     if (!order || !participant) return null;
-    if (!participant.active) throw new Error(participant.excludedAt ? "Игрок уже исключён после четвёртого нарушения" : "Нельзя штрафовать заменённого игрока");
+    if (participant.replacedAt) throw new Error("Нельзя штрафовать заменённого игрока");
     if (participant.paid) throw new Error("Нельзя изменить уже выплаченную долю");
-    const sequence = participant.penalties.length + 1;
-    const calculated = calculatePenaltyAmount(participant.shareUahMinor, sequence);
+    const now = new Date();
+    const profile = participant.playerProfile;
+    if (profile?.permanentlyBanned) throw new Error("Игрок уже заблокирован навсегда");
+    const sameDay = (value: Date) => value.getUTCFullYear() === now.getUTCFullYear()
+      && value.getUTCMonth() === now.getUTCMonth() && value.getUTCDate() === now.getUTCDate();
+    const dailyPenalties = this.escortOrders.flatMap((item) => item.participants)
+      .flatMap((item) => item.penalties)
+      .filter((penalty) => penalty.playerProfileId === participant.playerProfileId
+        && sameDay(penalty.violationDate ?? penalty.createdAt));
+    const sequence = dailyPenalties.length + 1;
+    if (sequence > 5) throw new Error("Все нарушения за сегодня уже зафиксированы");
+    if (!participant.active && sequence !== 5) throw new Error("Игрок уже отстранён");
+    const calculated = sequence <= 4
+      ? calculatePenaltyAmount(participant.shareUahMinor, sequence)
+      : { percentage: 0, amountUahMinor: 0n };
+    const alreadyWithheld = participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
+    const remaining = participant.shareUahMinor - alreadyWithheld;
     participant.penalties.push({
       id: randomUUID(),
       participantId,
+      playerProfileId: participant.playerProfileId,
       sequence,
+      violationDate: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
       percentage: calculated.percentage,
-      amountUahMinor: calculated.amountUahMinor,
+      amountUahMinor: calculated.amountUahMinor > remaining ? remaining : calculated.amountUahMinor,
       reason,
       createdById: adminId,
-      createdAt: new Date(),
+      createdAt: now,
     });
+    participant.dailyViolationCount = sequence;
     if (sequence === 4) {
       participant.active = false;
-      participant.excludedAt = new Date();
+      participant.excludedAt = now;
+      if (profile) profile.suspendedUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    }
+    if (sequence === 5 && profile) {
+      profile.permanentlyBanned = true;
+      profile.bannedAt = now;
+      profile.suspendedUntil = null;
+      participant.active = false;
     }
     order.updatedAt = new Date();
     return order;
@@ -233,7 +292,7 @@ export class MemoryStore implements AppStore {
   async replaceEscortParticipant(
     orderId: string,
     participantId: string,
-    input: { name: string; contact: string | null },
+    input: { name: string; gameId: string; contact: string | null },
   ): Promise<EscortOrderRecord | null> {
     const order = this.escortOrders.find((item) => item.id === orderId);
     const participant = order?.participants.find((item) => item.id === participantId);
@@ -242,6 +301,18 @@ export class MemoryStore implements AppStore {
     if (participant.replacedAt) throw new Error("Этот игрок уже заменён");
     if (participant.paid) throw new Error("Нельзя заменить игрока после выплаты");
     const withheld = participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
+    const now = new Date();
+    let profile = this.playerProfiles.find((item) => item.gameId === input.gameId);
+    if (profile?.permanentlyBanned) throw new Error("Новый игрок заблокирован навсегда");
+    if (profile?.suspendedUntil && profile.suspendedUntil > now) throw new Error("Новый игрок временно отстранён");
+    if (!profile) {
+      profile = {
+        id: randomUUID(), gameId: input.gameId, displayName: input.name, contact: input.contact,
+        suspendedUntil: null, permanentlyBanned: false, bannedAt: null, createdAt: now, updatedAt: now,
+        orderCount: 0, penaltyCount: 0, earnedUahMinor: 0n, withheldUahMinor: 0n,
+      };
+      this.playerProfiles.push(profile);
+    }
     participant.active = false;
     participant.replacedAt = new Date();
     order.participants.push({
@@ -249,6 +320,9 @@ export class MemoryStore implements AppStore {
       orderId,
       name: input.name,
       contact: input.contact,
+      playerProfileId: profile.id,
+      playerProfile: profile,
+      dailyViolationCount: 0,
       shareUahMinor: participant.shareUahMinor - withheld,
       active: true,
       paid: false,
@@ -276,6 +350,29 @@ export class MemoryStore implements AppStore {
     return this.escortOrders.filter((order) => order.status !== "cancelled").reduce((sum, order) => sum + order.creatorAmountMinor, 0n);
   }
 
+  async listEscortPlayerProfiles(query: string | undefined, page: number, pageSize: number): Promise<Page<EscortPlayerProfileRecord>> {
+    const needle = query?.toLowerCase();
+    const values = this.playerProfiles.filter((profile) => !needle
+      || [profile.gameId, profile.displayName, profile.contact ?? ""].some((value) => value.toLowerCase().includes(needle)));
+    const enriched = values.map((profile) => this.enrichProfile(profile));
+    return { items: enriched.slice((page - 1) * pageSize, page * pageSize), total: enriched.length, page, pageSize };
+  }
+
+  async getEscortPlayerProfile(id: string): Promise<EscortPlayerProfileRecord | null> {
+    const profile = this.playerProfiles.find((item) => item.id === id);
+    return profile ? this.enrichProfile(profile) : null;
+  }
+
+  async rotateEscortReviewCode(id: string, reviewCodeHash: string, issuedAt: Date): Promise<EscortOrderRecord | null> {
+    const order = this.escortOrders.find((item) => item.id === id);
+    if (!order) return null;
+    if (order.reviewCodeConsumedAt) throw new Error("Отзыв для этого заказа уже оставлен");
+    order.reviewCodeHash = reviewCodeHash;
+    order.reviewCodeIssuedAt = issuedAt;
+    order.updatedAt = new Date();
+    return order;
+  }
+
   async getDirectorBankBalance(): Promise<bigint> {
     return this.escortOrders.filter((order) => order.status !== "cancelled").reduce((sum, order) => sum + order.directorAmountMinor, 0n);
   }
@@ -284,24 +381,35 @@ export class MemoryStore implements AppStore {
     return this.admins.find((item) => item.username === username) ?? null;
   }
 
-  async createAdmin(username: string, passwordHash: string): Promise<AdminRecord> {
-    const value: AdminRecord = { id: randomUUID(), username, passwordHash, active: true, createdAt: new Date() };
+  async listAdmins(): Promise<AdminRecord[]> {
+    return [...this.admins];
+  }
+
+  async createAdmin(username: string, passwordHash: string, role: AdminRole = "admin"): Promise<AdminRecord> {
+    const value: AdminRecord = { id: randomUUID(), username, passwordHash, role, active: true, createdAt: new Date() };
     this.admins.push(value);
     return value;
+  }
+
+  async updateAdmin(id: string, input: { role?: AdminRole; active?: boolean; passwordHash?: string }): Promise<AdminRecord | null> {
+    const admin = this.admins.find((item) => item.id === id);
+    if (!admin) return null;
+    Object.assign(admin, input);
+    return admin;
   }
 
   private reconcileAdminAccess(presence: AdminSessionPresence): void {
     for (const session of this.sessions) {
       if (
         session.accessMode === "operator"
-        && (session.expiresAt <= presence.now || session.lastSeenAt < presence.activeSince || !session.admin.active)
+        && (session.expiresAt <= presence.now || session.lastSeenAt < presence.activeSince || !session.admin.active || session.admin.role === "observer")
       ) {
         session.accessMode = "observer";
       }
     }
     if (this.sessions.some((item) => item.accessMode === "operator")) return;
     const candidate = this.sessions
-      .filter((item) => item.expiresAt > presence.now && item.lastSeenAt >= presence.activeSince && item.admin.active)
+      .filter((item) => item.expiresAt > presence.now && item.lastSeenAt >= presence.activeSince && item.admin.active && item.admin.role !== "observer")
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id))[0];
     if (candidate) candidate.accessMode = "operator";
   }
@@ -316,7 +424,7 @@ export class MemoryStore implements AppStore {
     const value: AdminSessionRecord = {
       id: randomUUID(),
       ...input,
-      accessMode: this.sessions.some((item) => item.accessMode === "operator") ? "observer" : "operator",
+      accessMode: admin.role === "observer" || this.sessions.some((item) => item.accessMode === "operator") ? "observer" : "operator",
       createdAt: presence.now,
       lastSeenAt: presence.now,
       admin,
@@ -346,6 +454,40 @@ export class MemoryStore implements AppStore {
     this.sessions = this.sessions.filter((item) => item.expiresAt > now);
   }
 
+  async createAuditLog(input: {
+    adminId: string | null; action: string; entityType: string; entityId?: string | null; details?: Record<string, unknown>;
+  }): Promise<void> {
+    const admin = this.admins.find((item) => item.id === input.adminId);
+    this.auditLogs.unshift({
+      id: randomUUID(), adminId: input.adminId, adminUsername: admin?.username ?? null,
+      action: input.action, entityType: input.entityType, entityId: input.entityId ?? null,
+      details: input.details ?? null, createdAt: new Date(),
+    });
+  }
+
+  async listAuditLogs(page: number, pageSize: number): Promise<Page<AuditLogRecord>> {
+    return { items: this.auditLogs.slice((page - 1) * pageSize, page * pageSize), total: this.auditLogs.length, page, pageSize };
+  }
+
+  async financialSummary(from: Date, to: Date): Promise<FinancialSummary> {
+    const orders = this.escortOrders.filter((order) => order.status !== "cancelled" && order.orderDate >= from && order.orderDate <= to);
+    let grossUahMinor = 0n, directorUahMinor = 0n, creatorUahMinor = 0n, escortPoolUahMinor = 0n;
+    let penaltiesUahMinor = 0n, paidToEscortsUahMinor = 0n, unpaidToEscortsUahMinor = 0n;
+    for (const order of orders) {
+      grossUahMinor += order.amountUahMinor; directorUahMinor += order.directorAmountMinor;
+      creatorUahMinor += order.creatorAmountMinor; escortPoolUahMinor += order.escortPoolMinor;
+      for (const participant of order.participants) {
+        const withheld = participant.penalties.reduce((sum, penalty) => sum + penalty.amountUahMinor, 0n);
+        penaltiesUahMinor += withheld;
+        if (participant.replacedAt) continue;
+        if (participant.paid) paidToEscortsUahMinor += participant.shareUahMinor - withheld;
+        else unpaidToEscortsUahMinor += participant.shareUahMinor - withheld;
+      }
+    }
+    return { from, to, orderCount: orders.length, grossUahMinor, directorUahMinor, creatorUahMinor, escortPoolUahMinor,
+      penaltiesUahMinor, paidToEscortsUahMinor, unpaidToEscortsUahMinor };
+  }
+
   async dashboardCounts(): Promise<DashboardCounts> {
     return {
       pendingReviews: this.reviews.filter((item) => item.status === "pending").length,
@@ -363,6 +505,18 @@ export class MemoryStore implements AppStore {
   private reviewPage(items: ReviewRecord[], page: number, pageSize: number): Page<ReviewRecord> {
     const ordered = [...items].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     return { items: ordered.slice((page - 1) * pageSize, page * pageSize), total: ordered.length, page, pageSize };
+  }
+
+  private enrichProfile(profile: EscortPlayerProfileRecord): EscortPlayerProfileRecord {
+    const participants = this.escortOrders.flatMap((order) => order.participants).filter((item) => item.playerProfileId === profile.id);
+    const penalties = participants.flatMap((item) => item.penalties);
+    return {
+      ...profile,
+      orderCount: participants.length,
+      penaltyCount: penalties.length,
+      earnedUahMinor: participants.reduce((sum, item) => sum + item.shareUahMinor, 0n),
+      withheldUahMinor: penalties.reduce((sum, item) => sum + item.amountUahMinor, 0n),
+    };
   }
 
   private ticketPage(items: SupportTicketRecord[], page: number, pageSize: number): Page<SupportTicketRecord> {

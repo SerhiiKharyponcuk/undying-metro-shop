@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#05090b" />
     <title>Undying Metro — Админ-панель</title>
     <link rel="icon" href="../assets/undying-metro-avatar.webp" type="image/webp" />
-    <link rel="stylesheet" href="styles.css?v=13" />
+    <link rel="stylesheet" href="styles.css?v=14" />
     <script src="../config.js?v=11"></script>
   </head>
   <body>
@@ -29,7 +29,7 @@
 
     <div class="admin-app" id="adminApp" hidden>
       <header class="admin-header">
-        <a class="admin-brand" href="../index.html">
+        <a class="admin-brand" href="https://serhiikharyponcuk.github.io/undying-metro-shop/">
           <img src="../assets/undying-metro-avatar.webp" alt="" />
           <span><small>СИСТЕМА UNDYING METRO</small><strong>Управление</strong></span>
         </a>
@@ -59,7 +59,48 @@
           <button type="button" data-admin-tab="tickets">Поддержка <b id="ticketBadge">0</b></button>
           <button type="button" data-admin-tab="escorts">Сопроводы</button>
           <button type="button" data-admin-tab="completed">Выполненные <b id="completedBadge">0</b></button>
+          <button type="button" data-admin-tab="players">Игроки</button>
+          <button type="button" data-admin-tab="reports">Финансы</button>
+          <button type="button" data-admin-tab="audit">Журнал</button>
+          <button type="button" data-admin-tab="accounts" id="accountsTab" hidden>Аккаунты</button>
         </nav>
+
+        <section class="admin-section" data-admin-section="players" hidden>
+          <div class="section-toolbar">
+            <div><h2>Профили сопровождающих</h2><p>История, заработок, штрафы, временные отстранения и постоянные блокировки.</p></div>
+            <input id="playerSearch" placeholder="Имя, PUBG ID или контакт" />
+          </div>
+          <div class="admin-list profile-grid" id="playerProfiles"></div>
+        </section>
+
+        <section class="admin-section" data-admin-section="reports" hidden>
+          <div class="section-toolbar">
+            <div><h2>Финансовый отчёт</h2><p>Оборот, банки, штрафы и выплаты сопровождающим за выбранный период.</p></div>
+            <div class="toolbar-fields report-period">
+              <input id="reportFrom" type="date" />
+              <input id="reportTo" type="date" />
+              <button id="loadReport" type="button">Показать</button>
+              <button id="downloadReport" type="button">CSV</button>
+            </div>
+          </div>
+          <div class="report-grid" id="financialReport"></div>
+        </section>
+
+        <section class="admin-section" data-admin-section="audit" hidden>
+          <div class="section-toolbar"><div><h2>Журнал действий</h2><p>Кто и когда менял заказы, выплаты, штрафы, отзывы и аккаунты.</p></div></div>
+          <div class="admin-list" id="auditLogs"></div>
+        </section>
+
+        <section class="admin-section" data-admin-section="accounts" hidden>
+          <div class="section-toolbar"><div><h2>Аккаунты и роли</h2><p>Доступно только владельцу.</p></div></div>
+          <form class="account-form" id="accountForm">
+            <input name="username" minlength="3" maxlength="64" placeholder="Логин" required />
+            <input name="password" type="password" minlength="12" placeholder="Пароль (минимум 12 символов)" required />
+            <select name="role"><option value="admin">Администратор</option><option value="director">Директор</option><option value="observer">Наблюдатель</option><option value="owner">Владелец</option></select>
+            <button type="submit">Создать аккаунт</button>
+          </form>
+          <div class="admin-list" id="adminAccounts"></div>
+        </section>
 
         <section class="admin-section" data-admin-section="completed" hidden>
           <div class="section-toolbar">
@@ -163,7 +204,7 @@
               <button class="rate-button" id="loadNbuRate" type="button" disabled>Получить курс НБУ</button>
             </div>
 
-            <div class="escort-people-head"><span><strong>Сопровождающие</strong><small>От одного до трёх игроков</small></span><button id="addEscort" type="button">+ Добавить игрока</button></div>
+              <div class="escort-people-head"><span><strong>Сопровождающие</strong><small>От одного до трёх игроков; PUBG ID обязателен</small></span><button id="addEscort" type="button">+ Добавить игрока</button></div>
             <div class="escort-people" id="escortPeople"></div>
 
             <div class="escort-preview" id="escortPreview">
@@ -184,6 +225,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=13"></script>
+    <script src="app.js?v=14"></script>
   </body>
 </html>
