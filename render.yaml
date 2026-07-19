@@ -1,11 +1,13 @@
 databases:
   - name: undying-metro-db
+    plan: free
     databaseName: undying_metro
     user: undying_metro
 
 services:
   - type: web
     name: undying-metro-api
+    plan: free
     runtime: node
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run prisma:migrate && npm start
