@@ -166,7 +166,7 @@
 
     card.classList.add("is-claiming");
     renderCard(card);
-    setMessage("Бронируем линию связи на 10 минут…");
+    setMessage("Бронируем линию связи на 3 минуты…");
     try {
       const result = await api(`/api/managers/${encodeURIComponent(key)}/claim`, {
         method: "POST",

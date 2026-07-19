@@ -86,9 +86,10 @@ describe("Undying Metro API", () => {
     expect(response.json()).toMatchObject({ status: "ok", service: "Undying Metro Shop API" });
   });
 
-  it("показывает двух свободных менеджеров и фиксирует занятость на 10 минут", async () => {
+  it("показывает двух свободных менеджеров и фиксирует занятость на 3 минуты", async () => {
     const initial = await app.inject({ method: "GET", url: "/api/managers" });
     expect(initial.statusCode).toBe(200);
+    expect(initial.json().holdSeconds).toBe(3 * 60);
     expect(initial.json().items).toEqual([
       { key: "manager_1", status: "available", busyUntil: null },
       { key: "manager_2", status: "available", busyUntil: null },
@@ -97,7 +98,8 @@ describe("Undying Metro API", () => {
     const claimed = await app.inject({ method: "POST", url: "/api/managers/manager_1/claim" });
     expect(claimed.statusCode).toBe(201);
     const remaining = new Date(claimed.json().busyUntil).getTime() - Date.now();
-    expect(remaining).toBeGreaterThan(9 * 60 * 1000);
+    expect(remaining).toBeGreaterThan(2 * 60 * 1000);
+    expect(remaining).toBeLessThanOrEqual(3 * 60 * 1000);
 
     const status = await app.inject({ method: "GET", url: "/api/managers" });
     expect(status.json().items[0].status).toBe("busy");

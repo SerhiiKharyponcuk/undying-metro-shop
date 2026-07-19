@@ -10,14 +10,14 @@ window.UNDYING_CONFIG = Object.freeze({
       name: "АРТЕМ",
       specialty: "Покупки, товары и наличие",
       telegramUrl: "@Akulenok_pik",
-      avatar: "assets/manager-01.webp",
+      avatar: "assets/manager-01.webp?v=5",
     },
     {
       key: "manager_2",
       name: "КОСТЯ",
       specialty: "Оплата, заказы и помощь",
       telegramUrl: "@Qieush9",
-      avatar: "assets/manager-02.webp",
+      avatar: "assets/manager-02.webp?v=5",
     },
   ],
 });

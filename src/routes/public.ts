@@ -42,6 +42,7 @@ const pageQuery = z.object({ page: z.coerce.number().int().min(1).default(1), pa
 const ticketParams = z.object({ number: z.string().regex(/^UMS-\d{6}-[A-Z0-9]{4}$/) });
 const managerKeys = ["manager_1", "manager_2"] as const;
 const managerParams = z.object({ key: z.enum(managerKeys) });
+const managerHoldSeconds = 3 * 60;
 
 function serializeTicket(ticket: SupportTicketRecord) {
   return {
@@ -88,7 +89,7 @@ export async function registerPublicRoutes(
     const byKey = new Map(availability.map((item) => [item.managerKey, item.busyUntil]));
     return {
       serverTime: now,
-      holdSeconds: 600,
+      holdSeconds: managerHoldSeconds,
       items: managerKeys.map((key) => {
         const busyUntil = byKey.get(key) ?? null;
         const busy = Boolean(busyUntil && busyUntil > now);
@@ -104,7 +105,7 @@ export async function registerPublicRoutes(
       const params = managerParams.safeParse(request.params);
       if (!params.success) return reply.code(400).send({ error: "Неизвестный менеджер" });
       const now = new Date();
-      const result = await store.claimManager(params.data.key, now, new Date(now.getTime() + 10 * 60 * 1000));
+      const result = await store.claimManager(params.data.key, now, new Date(now.getTime() + managerHoldSeconds * 1000));
       if (!result.claimed) {
         return reply.code(409).send({
           key: params.data.key,
