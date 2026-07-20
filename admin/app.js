@@ -94,6 +94,22 @@
     return box;
   }
 
+  async function copyText(value) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  }
+
   function decodeBase64url(value) {
     const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
     const bytes = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=").slice(0));
@@ -813,14 +829,47 @@
     card.append(title, meta, status, figures);
     if (canWrite()) {
       const access = document.createElement("button"); access.type = "button"; access.textContent = "Выдать код кабинета"; writeControl(access);
+      const portalBox = document.createElement("div");
+      portalBox.className = "portal-code-card";
+      portalBox.hidden = true;
       access.addEventListener("click", async () => {
         access.disabled = true;
         try {
           const result = await api(`/api/admin/player-profiles/${profile.id}/portal-code`, { method: "POST", body: "{}" });
-          window.alert(`Код кабинета для PUBG ID ${result.gameId}: ${result.code}\nПередайте код только этому игроку.`);
+          const portalUrl = `${window.location.origin}/portal.html`;
+          const message = [
+            "Кабинет сопровождающего Undying Metro",
+            `Ссылка: ${portalUrl}`,
+            `PUBG ID: ${result.gameId}`,
+            `Код: ${result.code}`,
+          ].join("\n");
+          const code = document.createElement("code");
+          code.textContent = result.code;
+          const details = document.createElement("textarea");
+          details.readOnly = true;
+          details.value = message;
+          const copyCode = document.createElement("button");
+          copyCode.type = "button";
+          copyCode.textContent = "Копировать код";
+          const copyAll = document.createElement("button");
+          copyAll.type = "button";
+          copyAll.textContent = "Копировать всё";
+          copyCode.addEventListener("click", async () => {
+            await copyText(result.code);
+            globalStatus.textContent = "Код кабинета скопирован";
+          });
+          copyAll.addEventListener("click", async () => {
+            await copyText(message);
+            globalStatus.textContent = "Сообщение для игрока скопировано";
+          });
+          portalBox.replaceChildren(code, details, copyCode, copyAll);
+          portalBox.hidden = false;
+          globalStatus.textContent = `Код кабинета для PUBG ID ${result.gameId} создан`;
+          access.textContent = "Выдать новый код";
+          access.disabled = !canWrite();
         } catch (error) { globalStatus.textContent = error.message; access.disabled = false; }
       });
-      card.append(access);
+      card.append(access, portalBox);
     }
     return card;
   }

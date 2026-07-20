@@ -173,6 +173,11 @@ textarea { line-height:1.5; resize:vertical; }
 .profile-card__figures span,.report-grid article { padding:10px; border-radius:10px; background:rgba(0,0,0,.18); }
 .profile-card__figures small,.profile-card__figures b,.report-grid small,.report-grid strong { display:block; }
 .profile-card__figures small,.report-grid small { color:#738684; font-size:8px; }
+.profile-card > button { min-height:36px; margin-top:10px; border:1px solid rgba(85,244,225,.16); border-radius:9px; color:#aef1e9; background:rgba(85,244,225,.055); cursor:pointer; font-size:8px; font-weight:850; }
+.portal-code-card { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:9px; padding:10px; border:1px solid rgba(85,244,225,.16); border-radius:10px; background:rgba(85,244,225,.045); }
+.portal-code-card code { grid-column:1/-1; padding:10px; border-radius:8px; color:#07110f; background:var(--cyan); font:900 18px ui-monospace,monospace; letter-spacing:.08em; text-align:center; user-select:all; }
+.portal-code-card textarea { grid-column:1/-1; width:100%; min-height:92px; resize:vertical; color:#d9f6f2; border-color:rgba(85,244,225,.16); background:rgba(0,0,0,.22); font:750 9px/1.55 ui-monospace,monospace; }
+.portal-code-card button { min-height:34px; border:1px solid rgba(85,244,225,.18); border-radius:8px; color:#aef1e9; background:rgba(85,244,225,.07); cursor:pointer; font-size:7px; font-weight:900; }
 .report-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:9px; }
 .report-grid strong { margin-top:5px; font-size:15px; }
 .report-period { flex-wrap:wrap; }
@@ -288,6 +293,8 @@ textarea { line-height:1.5; resize:vertical; }
   .escort-person label { grid-column:2/4; }
   .escort-person .escort-remove { grid-column:3; grid-row:1; }
   .account-form,.account-card { grid-template-columns:1fr; }
+  .portal-code-card { grid-template-columns:1fr; }
+  .portal-code-card code,.portal-code-card textarea { grid-column:1; }
   .escort-preview,.escort-order__money { grid-template-columns:1fr 1fr; }
   .escort-order__head { align-items:stretch; flex-direction:column; }
   .escort-order__head select { width:100%; }
