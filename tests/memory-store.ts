@@ -733,6 +733,22 @@ export class MemoryStore implements AppStore {
     return Object.fromEntries(Object.entries(input.tables).map(([key, value]) => [key, Array.isArray(value) ? value.length : 0]));
   }
 
+  async clearEscortOperations(): Promise<Record<string, number>> {
+    const orders = this.escortOrders.length;
+    const participants = this.escortOrders.flatMap((order) => order.participants).length;
+    const penalties = this.escortOrders.flatMap((order) => order.participants).flatMap((participant) => participant.penalties).length;
+    const appeals = this.appeals.length;
+    const beforeAudit = this.auditLogs.length;
+    this.escortOrders = [];
+    this.appeals = [];
+    this.auditLogs = this.auditLogs.filter((item) => {
+      if (["escort_order", "escort_participant", "escort_penalty", "penalty_appeal"].includes(item.entityType)) return false;
+      if (item.action.startsWith("escort_") || item.action.startsWith("telegram_")) return false;
+      return item.action !== "penalty_appeal_created";
+    });
+    return { orders, participants, penalties, appeals, auditLogs: beforeAudit - this.auditLogs.length };
+  }
+
   private enrichProfile(profile: EscortPlayerProfileRecord): EscortPlayerProfileRecord {
     const participants = this.escortOrders.flatMap((order) => order.participants).filter((item) => item.playerProfileId === profile.id);
     const penalties = participants.flatMap((item) => item.penalties);

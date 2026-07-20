@@ -181,6 +181,7 @@ textarea { line-height:1.5; resize:vertical; }
 .report-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:9px; }
 .report-grid strong { margin-top:5px; font-size:15px; }
 .report-period { flex-wrap:wrap; }
+#clearEscortOperations { border-color:rgba(255,95,87,.24); color:#ffaaa5; background:rgba(255,95,87,.07); }
 .audit-card strong { color:#bdfbf3; }
 .account-form { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:8px; margin-bottom:14px; }
 .account-card { display:grid; grid-template-columns:minmax(120px,1fr) minmax(130px,180px) auto auto; align-items:center; gap:9px; }

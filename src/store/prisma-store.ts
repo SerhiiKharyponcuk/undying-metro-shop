@@ -1245,4 +1245,30 @@ export class PrismaStore implements AppStore {
     });
     return Object.fromEntries(arrays.map((key) => [key, tables[key].length]));
   }
+
+  async clearEscortOperations(): Promise<Record<string, number>> {
+    return this.prisma.$transaction(async (database) => {
+      const [orders, participants, penalties, appeals] = await Promise.all([
+        database.escortOrder.count(),
+        database.escortParticipant.count(),
+        database.escortPenalty.count(),
+        database.penaltyAppeal.count(),
+      ]);
+      await database.penaltyAppeal.deleteMany();
+      await database.escortPenalty.deleteMany();
+      await database.escortParticipant.deleteMany();
+      await database.escortOrder.deleteMany();
+      const auditLogs = await database.auditLog.deleteMany({
+        where: {
+          OR: [
+            { entityType: { in: ["escort_order", "escort_participant", "escort_penalty", "penalty_appeal"] } },
+            { action: { startsWith: "escort_" } },
+            { action: { startsWith: "telegram_" } },
+            { action: "penalty_appeal_created" },
+          ],
+        },
+      });
+      return { orders, participants, penalties, appeals, auditLogs: auditLogs.count };
+    });
+  }
 }

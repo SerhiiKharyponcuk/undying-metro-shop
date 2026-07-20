@@ -105,6 +105,7 @@ const passkeyUsernameBody = z.object({ username: z.string().trim().toLowerCase()
 const passkeyResponseBody = z.object({ username: z.string().trim().toLowerCase().min(3).max(64), response: z.any() });
 const passkeyRegistrationBody = z.object({ response: z.any() });
 const backupRestoreBody = z.object({ confirmation: z.literal("RESTORE"), backup: z.any() });
+const clearEscortOperationsBody = z.object({ confirmation: z.literal("DELETE TEST ORDERS") });
 
 function orderDate(value: string): Date | null {
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -641,6 +642,15 @@ export async function registerAdminRoutes(
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : "Не вдалося відновити резервну копію" });
     }
+  });
+
+  app.delete("/api/admin/escort-operations", { preHandler: [requireAdmin, requireCsrf, requireOperator, requireOwner] }, async (request, reply) => {
+    const body = clearEscortOperationsBody.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "Для очищення тестових замовлень введіть DELETE TEST ORDERS" });
+    const cleared = await store.clearEscortOperations();
+    await audit(request, "escort_operations.cleared", "system", null, cleared);
+    await notifier.operation("escort_operations_cleared", ["Тестові замовлення і виплати очищено", `Адміністратор: ${request.adminAuth!.admin.username}`, `Замовлень: ${cleared.orders}`]);
+    return { success: true, cleared };
   });
 
   app.get("/api/admin/reports/financial.csv", { preHandler: requireAdmin }, async (request, reply) => {

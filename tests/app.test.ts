@@ -340,6 +340,39 @@ describe("Undying Metro API", () => {
     expect(options.json().rp.id).toBe("example.test");
   });
 
+  it("clears test escort orders and payment history for owners", async () => {
+    const order = await seedCompletedPurchase();
+    const auth = await login();
+    const participant = order.participants[0]!;
+    await app.inject({
+      method: "PATCH",
+      url: `/api/admin/escort-orders/${order.id}/participants/${participant.id}`,
+      headers: { cookie: auth.cookie, "x-csrf-token": auth.csrf },
+      payload: { paid: true, method: "card", note: "test payout" },
+    });
+    expect(store.escortOrders).toHaveLength(1);
+    expect(store.auditLogs.some((item) => item.action === "escort_participant.payment_changed")).toBe(true);
+
+    const rejected = await app.inject({
+      method: "DELETE",
+      url: "/api/admin/escort-operations",
+      headers: { cookie: auth.cookie, "x-csrf-token": auth.csrf },
+      payload: { confirmation: "DELETE" },
+    });
+    expect(rejected.statusCode).toBe(400);
+
+    const cleared = await app.inject({
+      method: "DELETE",
+      url: "/api/admin/escort-operations",
+      headers: { cookie: auth.cookie, "x-csrf-token": auth.csrf },
+      payload: { confirmation: "DELETE TEST ORDERS" },
+    });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().cleared.orders).toBe(1);
+    expect(store.escortOrders).toHaveLength(0);
+    expect(store.auditLogs.some((item) => item.action === "escort_participant.payment_changed")).toBe(false);
+  });
+
   it("accepts protected Telegram commands for order status", async () => {
     const order = await seedCompletedPurchase();
     const response = await app.inject({

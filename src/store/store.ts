@@ -127,6 +127,7 @@ export interface AppStore {
   getShopBankBalance(): Promise<bigint>;
   getDirectorBankBalance(): Promise<bigint>;
   getCreatorBankBalance(): Promise<bigint>;
+  clearEscortOperations(): Promise<Record<string, number>>;
 
   findAdminByUsername(username: string): Promise<AdminRecord | null>;
   listAdmins(): Promise<AdminRecord[]>;

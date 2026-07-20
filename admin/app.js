@@ -1049,6 +1049,17 @@
     } catch (error) { globalStatus.textContent = error.message; }
   }
 
+  async function clearEscortOperations() {
+    if (currentRole !== "owner") { globalStatus.textContent = "Очистка тестовых заказов доступна только владельцу"; return; }
+    const confirmation = window.prompt("Будут удалены все сопровождения, выплаты, штрафы и оспаривания. Введите DELETE TEST ORDERS");
+    if (confirmation !== "DELETE TEST ORDERS") return;
+    try {
+      const result = await api("/api/admin/escort-operations", { method: "DELETE", body: JSON.stringify({ confirmation }) });
+      globalStatus.textContent = `Очищено: заказов ${result.cleared.orders}, выплат/записей журнала ${result.cleared.auditLogs}`;
+      await refreshAll();
+    } catch (error) { globalStatus.textContent = error.message; }
+  }
+
   async function loadPayments() {
     const container = document.querySelector("#paymentHistory");
     if (!container) return;
@@ -1279,6 +1290,7 @@
   document.querySelector("#restoreBackup").addEventListener("click", () => document.querySelector("#restoreBackupFile").click());
   document.querySelector("#restoreBackupFile").addEventListener("change", (event) => { const [file] = event.target.files; if (file) void restoreBackup(file); event.target.value = ""; });
   document.querySelector("#downloadBackup").addEventListener("click", () => void downloadBackup());
+  document.querySelector("#clearEscortOperations").addEventListener("click", () => void clearEscortOperations());
   document.querySelector("#accountForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
